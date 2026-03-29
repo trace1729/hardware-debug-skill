@@ -5,23 +5,20 @@ description: Use when analyzing a hardware failure from a VCD waveform, a XiangS
 
 # Hardware Debug Waveform
 
-## Purpose
+## Overview
 
-Use this skill for waveform-first hardware debugging with:
+Use this skill to debug hardware failures from large VCD waveforms with a Scala/Chisel source tree and, when available, emitted RTL.
 
-- a VCD file
-- a Chisel source tree (e.g. `src/main/scala/xiangshan`)
-- optionally emitted RTL (`build/rtl`)
+Core approach:
 
-When `build/rtl` is available, prefer it: it enables exact RTL ownership lookup and materially improves analysis accuracy.
+- use the waveform to identify the failure pattern
+- use emitted RTL to recover exact ownership and hierarchy
+- use Scala/Chisel source as the primary material for root-cause analysis
+- use generated SystemVerilog only as a fallback
 
-Source trees serve different roles:
+## Workflow
 
-- `build/rtl` — build persistent exact RTL ownership artifacts only
-- Scala/Chisel source — primary source for debugging analysis
-- generated SystemVerilog — fallback only when Scala is insufficient or mapping is ambiguous
-
-## Start
+### Step0 - Ask for Input
 
 If the user has not already provided them, ask for:
 
@@ -33,8 +30,6 @@ If the user has not already provided them, ask for:
 Recommended prompt:
 
 > Please provide the VCD path, the Chisel source root, and optionally the emitted RTL root (build/rtl), plus any focus scope or debug hint you want me to use.
-
-## Workflow
 
 
 All commands run from the skill root directory. Use `cd` once at the start:
@@ -110,9 +105,49 @@ Only run this step if a rough mapping artifact is available. Treat results as gu
 
 1. Read `focus_signals[*].changes` as raw waveform evidence.
 2. If `rtl.match_status == "exact"`, use `module_type` and `local_signal_name` to narrow the search to the most relevant Scala/Chisel source candidates.
-3. Analyze the Scala/Chisel code first.
-4. Present rough Chisel candidates from step 5 only as secondary, lower-confidence hints.
-5. Only inspect generated SystemVerilog if Scala cannot explain the behavior.
+3. Search the Scala root by module name, signal name, and nearby subsystem names to find the best candidates.
+4. Analyze the Scala/Chisel code first.
+5. Present rough Chisel candidates from step 5 only as secondary, lower-confidence hints.
+6. Only inspect generated SystemVerilog if Scala cannot explain the behavior.
+
+
+## Output
+
+Write the answer in two parts:
+
+**Summary** (2-4 sentences)
+
+- For a debug request:
+  - `Phenomenon`: one sentence describing the anomaly seen in the waveform
+  - `Location`: the most likely failing module, sub-block, or signal region
+  - `Root Cause Category`: a standard hardware bug class such as state machine deadlock, data hazard, backpressure stall, or flush-handling miss
+  - `Confidence`: state whether this is high confidence or low confidence
+- For an exploration request:
+  - `Function`: what the module does
+  - `Structure`: its main internal buffers, state, and submodules
+  - `Interconnect`: how it connects to nearby modules or pipeline stages
+
+**Detailed Analysis**
+
+- Expand the summary instead of repeating it.
+- For a debug request:
+  - summarize the waveform pattern, not raw per-cycle values
+  - explain the RTL ownership and the relevant Scala/Chisel logic
+  - explain the likely root cause
+  - give a fix recommendation if confidence is high
+  - otherwise give the next best debugging steps
+- For an exploration request:
+  - explain the observed behavior in architecture terms
+  - connect the waveform evidence to the RTL owner and then to the Scala/Chisel implementation
+  - recommend the next useful file, submodule, or concept to inspect
+
+Use precise terms in the detailed analysis:
+
+- signals/timing: `rising edge`, `falling edge`, `valid`, `ready`, `handshake`, `backpressure`, `stall`, `flush`, `state transition`
+- architecture/control: `pipeline stage`, `hazard detection`, `forwarding`, `cache hierarchy`, `fetch/decode/execute`, `instruction set architecture`, `bus arbitration`, `memory consistency`, `reorder buffer`, `issue queue`, `commit/retire`
+
+Avoid: raw per-cycle value dumps, long exact-signal lists, large artifact path inventories, large SystemVerilog excerpts, and preprocessing detail.
+Include only the few source files or artifact paths that materially support the analysis.
 
 ## Rules
 
@@ -123,24 +158,9 @@ Only run this step if a rough mapping artifact is available. Treat results as gu
 - Treat rough Chisel joins as guesses, never as proven ownership.
 - Avoid reading large SystemVerilog files unless Scala-first analysis is blocked.
 
-## Output
-
-Write the answer in three parts:
-
-**Summary** (2–4 sentences)
-
-**One short artifact-status line** (e.g. `exact RTL mode` or `waveform-only mode`, artifact file used ...)
-
-**Detailed Analysis**: expand the analysis upon the summary
-
-
-Use precise terms in detailed analysis:
-
-- signals/timing: `rising edge`, `falling edge`, `valid`, `ready`, `handshake`, `backpressure`, `stall`, `flush`, `state transition`
-- architecture/control: `pipeline stage`, `hazard detection`, `forwarding`, `cache hierarchy`, `fetch/decode/execute`, `instruction set architecture`, `bus arbitration`, `memory consistency`, `reorder buffer`, `issue queue`, `commit/retire`
-
-Avoid: raw per-cycle value dumps, long exact-signal lists, artifact path inventories, large SystemVerilog excerpts, preprocessing detail.
-
 ## Reference
 
-For command flags, artifact layout, and schema details, see `README_en.md` (English) or `README.md` (Chinese).
+For command flags, artifact layout, and schema details:
+
+- `README_en.md` (English)
+- `README.md` (legacy/default copy in this repo)
