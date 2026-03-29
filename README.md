@@ -4,26 +4,19 @@
 
 This skill is a portable hardware-debug workflow for large VCD waveforms: it validates inputs, builds an exact RTL authority table from emitted RTL when available, converts the waveform into a queryable database, and generates compact debug packets that bundle waveform evidence with hierarchy and ownership hints.
 
-## What This Skill Is For
 
-Use this skill when you need an LLM to analyze a hardware failure from:
+## How to use
 
-- a VCD waveform
-- a XiangShan-style Chisel source tree
-- optionally an emitted RTL tree such as `build/rtl`
+```
+mkdir -p ~/.codex/skills/
+cd ~/.codex/skills
+git clone https://github.com/trace1729/hardware-debug-skill.git
+```
 
-The design goal is to make waveform-driven debugging feasible for LLMs without forcing them to read raw multi-GB VCD files or unreadable generated Verilog directly.
-
-This skill is portable by design:
-
-- all public scripts live inside the skill folder
-- commands are written relative to the skill root
-- the workflow can still run in waveform-only mode when `build/rtl` is not available
-
-Accuracy note:
-
-- providing `build/rtl` is strongly recommended because it enables exact RTL authority lookup and usually improves the accuracy of the final analysis substantially
-- without `build/rtl`, the pipeline can still analyze waveform evidence, but exact RTL ownership is unavailable
+```
+codex
+$Hardware Debug Waveform
+```
 
 ## Layout
 
@@ -46,6 +39,7 @@ hardware-debug-waveform/
 
 ## How To Use The Skill
 
+
 ### Inputs
 
 The skill expects:
@@ -61,37 +55,7 @@ Optional inputs:
 - `--top`: RTL top module name, default `SimTop`
 - `--window-len`: window size for waveform preprocessing, default `1000`
 
-### First Command
 
-Run this first from the skill root:
-
-```bash
-cd hardware-debug-waveform
-python scripts/hw_debug_cli.py inspect-inputs \
-  --scala-root /path/to/src/main/scala/xiangshan \
-  --vcd /path/to/run.vcd \
-  --rtl-root /path/to/build/rtl \
-  --focus-scope TOP.SimTop.core.rob \
-  --suggestion "hang near retire"
-```
-
-If `build/rtl` is unavailable, omit `--rtl-root`:
-
-```bash
-python scripts/hw_debug_cli.py inspect-inputs \
-  --scala-root /path/to/src/main/scala/xiangshan \
-  --vcd /path/to/run.vcd
-```
-
-`inspect-inputs` does three things:
-
-- validates paths
-- prints the exact artifact storage locations
-- reports cache hit or rebuild-needed status
-- warns when VCD or RTL artifacts are large
-- prints the exact commands for the next steps
-
-If `--rtl-root` is available, include it. That is the preferred mode because it usually improves the quality and precision of the RTL-side diagnosis.
 
 ### Where Artifacts Are Stored
 

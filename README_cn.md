@@ -1,29 +1,23 @@
 # Hardware Debug Waveform Skill
 
-## 一句话总结
+## 总结
 
-这个 skill 是一个可移植的硬件调试工作流：它先校验输入，再在有 `build/rtl` 时从 emitted RTL 构建精确 RTL authority 表，把 VCD 转成可查询的波形数据库，最后生成把波形证据、层级信息和 ownership 提示打包在一起的 debug packet。
+基于vcd构建层次化的数据文件，基于build/rtl 构建 chisel -> verilog 信号映射，从而让LLM更好的根据波形调试。
 
-## 这个 Skill 用来做什么
 
-适用场景：
+## 如何使用
 
-- 你有一个 VCD 波形
-- 你有 XiangShan 风格的 Chisel 源码树
-- 你可能还有 emitted RTL 目录，比如 `build/rtl`
+```
+mkdir -p ~/.codex/skills/
+cd ~/.codex/skills
+git clone https://github.com/trace1729/hardware-debug-skill.git
+```
 
-核心目标是让 LLM 能真正“读”大波形，而不是直接硬啃超大的原始 VCD，也不是去分析可读性很差的 generated Verilog。
+```
+codex
+$Hardware Debug Waveform
+```
 
-这个 skill 具备可移植性：
-
-- 对外暴露的脚本都在 skill 目录内
-- 命令都以 skill 根目录为相对路径
-- 即使没有 `build/rtl`，也能以 waveform-only 模式运行
-
-精度说明：
-
-- 强烈建议提供 `build/rtl`，因为这样可以启用 exact RTL authority lookup，通常会明显提升最终分析的准确性
-- 如果没有 `build/rtl`，流水线仍然可以分析波形证据，但无法给出 exact RTL ownership
 
 ## 目录结构
 
@@ -61,37 +55,7 @@ hardware-debug-waveform/
 - `--top`：RTL 顶层模块名，默认 `SimTop`
 - `--window-len`：波形切窗长度，默认 `1000`
 
-### 第一步
 
-进入 skill 根目录后，先运行：
-
-```bash
-cd hardware-debug-waveform
-python scripts/hw_debug_cli.py inspect-inputs \
-  --scala-root /path/to/src/main/scala/xiangshan \
-  --vcd /path/to/run.vcd \
-  --rtl-root /path/to/build/rtl \
-  --focus-scope TOP.SimTop.core.rob \
-  --suggestion "hang near retire"
-```
-
-如果没有 `build/rtl`，就省略 `--rtl-root`：
-
-```bash
-python scripts/hw_debug_cli.py inspect-inputs \
-  --scala-root /path/to/src/main/scala/xiangshan \
-  --vcd /path/to/run.vcd
-```
-
-`inspect-inputs` 会做三件事：
-
-- 校验路径是否存在
-- 打印 artifact 的明确存储位置
-- 报告 cache hit 还是需要重建
-- 输出 RTL 树和 VCD 的体积信息
-- 提示后续应该执行的精确命令
-
-如果 `--rtl-root` 可用，建议一定带上；这是首选模式，因为通常能明显提升 RTL 侧诊断的质量和精度。
 
 ### Artifact 存放位置
 
@@ -113,7 +77,7 @@ hardware-debug-waveform/artifacts/
 
 如果需要，你仍然可以通过 `--out-dir` 或 `--out` 显式改写输出位置。
 
-## 对外暴露的命令
+## 子命令
 
 ### `inspect-inputs`
 
