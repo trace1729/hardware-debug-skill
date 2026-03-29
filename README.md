@@ -571,7 +571,7 @@ Recommended order:
 2. Build the waveform DB.
 3. Build RTL authority if emitted RTL is available.
 4. Query a packet for one suspect window.
-5. Read `focus_signals[*].changes` as waveform evidence.
+5. Read `focus_signals[*].changes` as raw evidence, but summarize the pattern instead of echoing detailed value dumps.
 6. Treat `rtl.match_status == exact` as authoritative emitted RTL ownership.
 7. If rough Chisel mapping exists, present it only as a candidate, never as proven ownership.
 
@@ -580,13 +580,15 @@ When writing the final debugging answer, keep artifact discussion very short.
 Preferred answer shape:
 
 - one short line on artifact mode, for example `exact RTL mode` or `waveform-only mode`
-- then focus mainly on suspected RTL module, exact signal evidence, and the likely mechanism
+- then focus mainly on suspected RTL module, a compact summary of the waveform change pattern, and the likely mechanism
 - include rough Chisel candidates only as a small follow-up when useful
 
 Avoid spending much space on:
 
 - artifact inventories
 - file path dumps
+- long exact-signal listings
+- raw per-cycle value transitions
 - preprocessing mechanics
 - schema details
 

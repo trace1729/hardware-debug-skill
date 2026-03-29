@@ -75,11 +75,19 @@ Preferred response order:
 
 1. one short artifact-status line
 2. suspected RTL module or focus scope
-3. exact RTL signal evidence
+3. short summary of the relevant waveform change pattern
 4. likely fault mechanism
 5. rough Chisel candidates only if helpful
 
-Do not spend much space on file lists, schema details, or preprocessing mechanics unless the user explicitly asks.
+Do not dump long lists of exact RTL signals, raw value transitions, or detailed per-cycle changes unless the user explicitly asks.
+
+Summarize value changes at a higher level, for example:
+
+- which small set of signals or sub-blocks became active or stopped changing
+- whether progress stopped, oscillated, or diverged from the expected pattern
+- whether the behavior points to stall, backpressure, invalid handshake, wrong state transition, or bad control flow
+
+Prefer interpretation over raw evidence listing.
 
 ## Reference
 

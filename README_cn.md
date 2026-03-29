@@ -571,7 +571,7 @@ python scripts/hw_debug_cli.py rough-map-chisel \
 2. 构建 waveform DB。
 3. 如果有 emitted RTL，就构建 RTL authority。
 4. 针对可疑窗口生成 packet。
-5. 阅读 `focus_signals[*].changes`，把它当作波形证据。
+5. 阅读 `focus_signals[*].changes` 作为原始证据，但输出时应总结变化模式，而不是展开详细数值转储。
 6. 对 `rtl.match_status == exact` 的条目，把它视为权威的 emitted RTL ownership。
 7. 如果有 rough Chisel mapping，只能把它当作候选，不要表述成已证明的 source ownership。
 
@@ -580,13 +580,15 @@ python scripts/hw_debug_cli.py rough-map-chisel \
 推荐输出结构：
 
 - 先用一句很短的话说明当前是 `exact RTL mode` 还是 `waveform-only mode`
-- 然后主要聚焦可疑 RTL 模块、精确的信号证据和可能的故障机理
+- 然后主要聚焦可疑 RTL 模块、紧凑的波形变化模式总结，以及可能的故障机理
 - 如果 rough Chisel candidate 有帮助，再作为很小的补充带上
 
 尽量不要把篇幅花在下面这些内容上：
 
 - artifact 清单
 - 大段文件路径
+- 很长的精确信号列表
+- 逐周期原始数值变化
 - 预处理实现细节
 - schema 说明
 
