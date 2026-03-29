@@ -4,13 +4,6 @@
 
 This skill is a portable hardware-debug workflow for large VCD waveforms: it validates inputs, builds an exact RTL authority table from emitted RTL when available, converts the waveform into a queryable database, and generates compact debug packets that bundle waveform evidence with hierarchy and ownership hints.
 
-When `build/rtl` is available, the intended split is:
-
-- emitted RTL is used to build persistent exact ownership storage
-- Scala/Chisel source is used first for actual debugging analysis
-- SystemVerilog is only a fallback when Scala is not enough
-
-
 ## How to use
 
 ### Install Skill

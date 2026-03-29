@@ -4,13 +4,6 @@
 
 基于vcd构建层次化的数据文件，基于build/rtl 构建 chisel -> verilog 信号映射，从而让LLM更好的根据波形调试。
 
-当 `build/rtl` 可用时，推荐明确区分两类用途：
-
-- emitted RTL 用来构建持久化的 exact ownership 存储
-- Scala/Chisel 源码优先用于实际调试分析
-- 只有当 Scala 不足以解释行为时，才回退去看 SystemVerilog
-
-
 ## 如何使用
 
 ### 安装skill
