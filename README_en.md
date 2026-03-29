@@ -25,10 +25,10 @@ The skill expects:
 
 - `--vcd`: path to the waveform VCD file
 - `--scala-root`: path to the Chisel source tree, usually `src/main/scala/xiangshan`
-- `--rtl-root`: optional path to emitted RTL, usually `build/rtl`
 
 Optional inputs:
 
+- `--rtl-root`: optional but **highly recommand** path to emitted RTL, usually `build/rtl`
 - `--focus-scope`: a waveform hierarchy scope to narrow analysis
 - `--suggestion`: a human hint such as `hang near dispatch` or `wrong commit behavior`
 - `--top`: RTL top module name, default `SimTop`

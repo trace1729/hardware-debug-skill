@@ -25,10 +25,10 @@ $Hardware Debug Waveform
 
 - `--vcd`：VCD 波形文件路径
 - `--scala-root`：Chisel 源码树路径，通常是 `src/main/scala/xiangshan`
-- `--rtl-root`：可选，emitted RTL 路径，通常是 `build/rtl`
 
 可选输入：
 
+- `--rtl-root`：可选，但是**推荐** emitted RTL 路径，通常是 `build/rtl`
 - `--focus-scope`：指定要聚焦的波形层级 scope
 - `--suggestion`：人工提供的调试提示，比如 `hang near dispatch`
 - `--top`：RTL 顶层模块名，默认 `SimTop`
