@@ -37,6 +37,8 @@ python scripts/hw_debug_cli.py inspect-inputs \
 The skill-local `inspect-inputs` command:
 - validates required paths
 - prints file and tree sizes
+- prints the exact artifact storage locations
+- checks cache status before expensive rebuilds
 - warns when artifacts are large
 - prints the exact commands to build or reuse debug artifacts
 
@@ -56,11 +58,24 @@ If it warns that files are very large, tell the user before running expensive co
 The helper prints exact commands, but the main ones are:
 
 ```bash
-python scripts/hw_debug_cli.py build-authority --rtl-root <rtl-root> --top SimTop --out-dir <authority-out>
-python scripts/hw_debug_cli.py build-wave-db --vcd <vcd> --out-dir <wave-out> --window-len 1000
+python scripts/hw_debug_cli.py build-authority --rtl-root <rtl-root> --top SimTop [--out-dir <authority-out>] [--force]
+python scripts/hw_debug_cli.py build-wave-db --vcd <vcd> [--out-dir <wave-out>] --window-len 1000 [--force]
 python scripts/hw_debug_cli.py query-packet --manifest <wave-out>/manifest.json --window-id <wN> --out <packet.json> [--authority <authority-artifact>] [--focus-scope <scope>]
 python scripts/hw_debug_cli.py rough-map-chisel --packet <packet.json> --mapping <rough-mapping.json> --out <rough-join.json>
 ```
+
+Default storage location:
+- artifacts are stored under `hardware-debug-waveform/artifacts/`
+- if `--out-dir` is omitted, the skill derives a deterministic cache directory from the input files and options
+- the important default subtrees are:
+  - `artifacts/authority/<fingerprint>/`
+  - `artifacts/wave_db/<fingerprint>/`
+  - `artifacts/packets/<fingerprint>/`
+
+Cache behavior:
+- `build-authority` reuses an existing cached artifact when the RTL tree signature and `--top` still match
+- `build-wave-db` reuses an existing cached artifact when the VCD signature and `--window-len` still match
+- use `--force` to rebuild even when the cache matches
 
 If `build/rtl` is unavailable:
 - skip `build-authority`

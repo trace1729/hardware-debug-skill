@@ -86,10 +86,32 @@ python scripts/hw_debug_cli.py inspect-inputs \
 `inspect-inputs` 会做三件事：
 
 - 校验路径是否存在
+- 打印 artifact 的明确存储位置
+- 报告 cache hit 还是需要重建
 - 输出 RTL 树和 VCD 的体积信息
 - 提示后续应该执行的精确命令
 
 如果 `--rtl-root` 可用，建议一定带上；这是首选模式，因为通常能明显提升 RTL 侧诊断的质量和精度。
+
+### Artifact 存放位置
+
+默认情况下，这个 skill 会把输出放在 skill 根目录下：
+
+```text
+hardware-debug-waveform/artifacts/
+├── authority/<fingerprint>/
+├── wave_db/<fingerprint>/
+└── packets/<fingerprint>/
+```
+
+这里的 `<fingerprint>` 由输入文件和关键选项共同决定。
+
+例如：
+
+- authority 的 cache key 取决于 RTL 树签名和 `--top`
+- waveform DB 的 cache key 取决于 VCD 文件签名和 `--window-len`
+
+如果需要，你仍然可以通过 `--out-dir` 或 `--out` 显式改写输出位置。
 
 ## 对外暴露的命令
 
@@ -119,9 +141,13 @@ python scripts/hw_debug_cli.py inspect-inputs \
 ```bash
 python scripts/hw_debug_cli.py build-authority \
   --rtl-root /path/to/build/rtl \
-  --top SimTop \
-  --out-dir /tmp/hw_debug_rtl_authority
+  --top SimTop
 ```
+
+缓存行为：
+
+- 如果已经存在匹配的 authority artifact，就直接复用，不再重建
+- 如果你想强制重建，增加 `--force`
 
 ### `build-wave-db`
 
@@ -139,9 +165,13 @@ python scripts/hw_debug_cli.py build-authority \
 ```bash
 python scripts/hw_debug_cli.py build-wave-db \
   --vcd /path/to/run.vcd \
-  --out-dir /tmp/hw_wave_db \
   --window-len 1000
 ```
+
+缓存行为：
+
+- 如果已经存在匹配的 waveform DB artifact，就直接复用，不再重建
+- 如果你想强制重建，增加 `--force`
 
 ### `query-packet`
 

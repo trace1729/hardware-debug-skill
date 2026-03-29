@@ -2,9 +2,11 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 from pathlib import Path
 import sys
+from typing import Any
 
 
 SKILL_DIR = Path(__file__).resolve().parents[1]
@@ -21,6 +23,7 @@ from lib.ingest_waveform import stream_waveform_store
 WARN_VCD_BYTES = 1 * 1024 * 1024 * 1024
 WARN_TREE_BYTES = 512 * 1024 * 1024
 WARN_RTL_FILES = 1000
+ARTIFACTS_DIR = SKILL_DIR / "artifacts"
 
 
 def _format_bytes(size: int) -> str:
@@ -48,6 +51,98 @@ def _validate(path: Path, kind: str) -> None:
         raise SystemExit(f"{kind} does not exist: {path}")
 
 
+def _write_json(path: Path, obj: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(obj, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
+def _file_signature(path: Path) -> dict[str, Any]:
+    stat = path.stat()
+    return {
+        "path": str(path.resolve()),
+        "size": stat.st_size,
+        "mtime_ns": stat.st_mtime_ns,
+    }
+
+
+def _tree_signature(root: Path) -> dict[str, Any]:
+    file_count = 0
+    total_bytes = 0
+    max_mtime_ns = 0
+    for path in root.rglob("*"):
+        if not path.is_file():
+            continue
+        stat = path.stat()
+        file_count += 1
+        total_bytes += stat.st_size
+        if stat.st_mtime_ns > max_mtime_ns:
+            max_mtime_ns = stat.st_mtime_ns
+    return {
+        "path": str(root.resolve()),
+        "file_count": file_count,
+        "total_bytes": total_bytes,
+        "max_mtime_ns": max_mtime_ns,
+    }
+
+
+def _fingerprint(parts: dict[str, Any]) -> str:
+    payload = json.dumps(parts, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
+
+
+def _authority_cache_meta(*, rtl_root: Path, top: str) -> dict[str, Any]:
+    return {
+        "kind": "rtl_authority",
+        "top": top,
+        "rtl_root": _tree_signature(rtl_root),
+    }
+
+
+def _wave_cache_meta(*, vcd: Path, window_len: int) -> dict[str, Any]:
+    return {
+        "kind": "wave_db",
+        "window_len": window_len,
+        "vcd": _file_signature(vcd),
+    }
+
+
+def _default_authority_out(*, rtl_root: Path, top: str) -> Path:
+    meta = _authority_cache_meta(rtl_root=rtl_root, top=top)
+    return ARTIFACTS_DIR / "authority" / _fingerprint(meta)
+
+
+def _default_wave_out(*, vcd: Path, window_len: int) -> Path:
+    meta = _wave_cache_meta(vcd=vcd, window_len=window_len)
+    return ARTIFACTS_DIR / "wave_db" / _fingerprint(meta)
+
+
+def _default_packet_out(*, wave_out: Path, window_id: str) -> Path:
+    packet_key = _fingerprint({"kind": "packet", "wave_out": str(wave_out.resolve())})
+    return ARTIFACTS_DIR / "packets" / packet_key / f"packet_{window_id}.json"
+
+
+def _cache_meta_path(out_dir: Path) -> Path:
+    return out_dir / "cache_meta.json"
+
+
+def _cache_matches(out_dir: Path, expected: dict[str, Any], required_files: list[str]) -> bool:
+    meta_path = _cache_meta_path(out_dir)
+    if not meta_path.exists():
+        return False
+    missing = [name for name in required_files if not (out_dir / name).exists()]
+    if missing:
+        return False
+    try:
+        existing = json.loads(meta_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return False
+    return existing == expected
+
+
+def _store_cache_meta(out_dir: Path, meta: dict[str, Any]) -> None:
+    _write_json(_cache_meta_path(out_dir), meta)
+
+
 def _self_cmd() -> str:
     return "python scripts/hw_debug_cli.py"
 
@@ -63,6 +158,11 @@ def _cmd_inspect_inputs(args: argparse.Namespace) -> int:
         rtl_files, rtl_bytes = _dir_stats(args.rtl_root)
     scala_files, scala_bytes = _dir_stats(args.scala_root)
     vcd_bytes = args.vcd.stat().st_size
+    authority_out = args.authority_out or (
+        _default_authority_out(rtl_root=args.rtl_root, top=args.top) if args.rtl_root is not None else None
+    )
+    wave_out = args.wave_out or _default_wave_out(vcd=args.vcd, window_len=args.window_len)
+    packet_out = args.packet_out or _default_packet_out(wave_out=wave_out, window_id="wN")
 
     print("Validated inputs")
     print(f"rtl-root: {args.rtl_root if args.rtl_root is not None else '<not provided>'}")
@@ -94,19 +194,46 @@ def _cmd_inspect_inputs(args: argparse.Namespace) -> int:
     if args.focus_scope:
         print(f"Focus scope: {args.focus_scope}")
     print()
+    print("Artifact locations")
+    if authority_out is not None:
+        print(f"authority-out: {authority_out}")
+    else:
+        print("authority-out: <skipped in waveform-only mode>")
+    print(f"wave-out: {wave_out}")
+    print(f"packet-out-template: {packet_out}")
+    print()
+    print("Cache status")
+    if authority_out is not None:
+        authority_meta = _authority_cache_meta(rtl_root=args.rtl_root, top=args.top)
+        authority_hit = _cache_matches(
+            authority_out,
+            authority_meta,
+            ["rtl_authority.sqlite3", "rtl_authority_table.json", "rtl_authority_index.json"],
+        )
+        print(f"authority: {'cache hit' if authority_hit else 'rebuild required'}")
+    else:
+        print("authority: skipped")
+    wave_meta = _wave_cache_meta(vcd=args.vcd, window_len=args.window_len)
+    wave_hit = _cache_matches(
+        wave_out,
+        wave_meta,
+        ["manifest.json", "signal_metadata.sqlite3", "signals.json", "windows.json"],
+    )
+    print(f"wave-db: {'cache hit' if wave_hit else 'rebuild required'}")
+    print()
     print("Commands to run")
     if args.rtl_root is not None:
-        print(f"{_self_cmd()} build-authority --rtl-root {args.rtl_root} --top {args.top} --out-dir {args.authority_out}")
+        print(f"{_self_cmd()} build-authority --rtl-root {args.rtl_root} --top {args.top} --out-dir {authority_out}")
     else:
         print("waveform-only analysis mode: exact RTL authority build is skipped")
-    print(f"{_self_cmd()} build-wave-db --vcd {args.vcd} --out-dir {args.wave_out} --window-len {args.window_len}")
-    packet_cmd = f"{_self_cmd()} query-packet --manifest {args.wave_out / 'manifest.json'} --window-id <wN> --out {args.packet_out}"
+    print(f"{_self_cmd()} build-wave-db --vcd {args.vcd} --out-dir {wave_out} --window-len {args.window_len}")
+    packet_cmd = f"{_self_cmd()} query-packet --manifest {wave_out / 'manifest.json'} --window-id <wN> --out {packet_out}"
     if args.rtl_root is not None:
-        packet_cmd += f" --authority {args.authority_out / 'rtl_authority.sqlite3'}"
+        packet_cmd += f" --authority {authority_out / 'rtl_authority.sqlite3'}"
     if args.focus_scope:
         packet_cmd += f" --focus-scope {args.focus_scope}"
     print(packet_cmd)
-    print(f"{_self_cmd()} rough-map-chisel --packet {args.packet_out} --mapping <rough-mapping.json> --out <rough-join.json>")
+    print(f"{_self_cmd()} rough-map-chisel --packet {packet_out} --mapping <rough-mapping.json> --out <rough-join.json>")
     print()
     print("How to map back")
     print("- Use query-packet to read waveform evidence by window.")
@@ -116,12 +243,34 @@ def _cmd_inspect_inputs(args: argparse.Namespace) -> int:
 
 
 def _cmd_build_authority(args: argparse.Namespace) -> int:
-    build_rtl_authority(rtl_root=args.rtl_root, top=args.top, out_dir=args.out_dir)
+    out_dir = args.out_dir or _default_authority_out(rtl_root=args.rtl_root, top=args.top)
+    cache_meta = _authority_cache_meta(rtl_root=args.rtl_root, top=args.top)
+    if not args.force and _cache_matches(
+        out_dir,
+        cache_meta,
+        ["rtl_authority.sqlite3", "rtl_authority_table.json", "rtl_authority_index.json"],
+    ):
+        print(f"cache hit: reusing RTL authority at {out_dir}")
+        return 0
+    build_rtl_authority(rtl_root=args.rtl_root, top=args.top, out_dir=out_dir)
+    _store_cache_meta(out_dir, cache_meta)
+    print(f"built RTL authority at {out_dir}")
     return 0
 
 
 def _cmd_build_wave_db(args: argparse.Namespace) -> int:
-    stream_waveform_store(vcd_path=args.vcd, out_dir=args.out_dir, window_len=args.window_len)
+    out_dir = args.out_dir or _default_wave_out(vcd=args.vcd, window_len=args.window_len)
+    cache_meta = _wave_cache_meta(vcd=args.vcd, window_len=args.window_len)
+    if not args.force and _cache_matches(
+        out_dir,
+        cache_meta,
+        ["manifest.json", "signal_metadata.sqlite3", "signals.json", "windows.json"],
+    ):
+        print(f"cache hit: reusing waveform DB at {out_dir}")
+        return 0
+    stream_waveform_store(vcd_path=args.vcd, out_dir=out_dir, window_len=args.window_len)
+    _store_cache_meta(out_dir, cache_meta)
+    print(f"built waveform DB at {out_dir}")
     return 0
 
 
@@ -207,21 +356,23 @@ def build_parser() -> argparse.ArgumentParser:
     inspect_p.add_argument("--suggestion")
     inspect_p.add_argument("--top", default="SimTop")
     inspect_p.add_argument("--window-len", type=int, default=1000)
-    inspect_p.add_argument("--authority-out", type=Path, default=Path("/tmp/hw_debug_rtl_authority_skill"))
-    inspect_p.add_argument("--wave-out", type=Path, default=Path("/tmp/hw_wave_db_skill"))
-    inspect_p.add_argument("--packet-out", type=Path, default=Path("/tmp/hw_debug_packet_skill.json"))
+    inspect_p.add_argument("--authority-out", type=Path)
+    inspect_p.add_argument("--wave-out", type=Path)
+    inspect_p.add_argument("--packet-out", type=Path)
     inspect_p.set_defaults(func=_cmd_inspect_inputs)
 
     auth_p = sub.add_parser("build-authority")
     auth_p.add_argument("--rtl-root", required=True, type=Path)
     auth_p.add_argument("--top", default="SimTop")
-    auth_p.add_argument("--out-dir", required=True, type=Path)
+    auth_p.add_argument("--out-dir", type=Path)
+    auth_p.add_argument("--force", action="store_true")
     auth_p.set_defaults(func=_cmd_build_authority)
 
     wave_p = sub.add_parser("build-wave-db")
     wave_p.add_argument("--vcd", required=True, type=Path)
-    wave_p.add_argument("--out-dir", required=True, type=Path)
+    wave_p.add_argument("--out-dir", type=Path)
     wave_p.add_argument("--window-len", type=int, default=1000)
+    wave_p.add_argument("--force", action="store_true")
     wave_p.set_defaults(func=_cmd_build_wave_db)
 
     packet_p = sub.add_parser("query-packet")

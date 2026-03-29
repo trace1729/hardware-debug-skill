@@ -86,10 +86,32 @@ python scripts/hw_debug_cli.py inspect-inputs \
 `inspect-inputs` does three things:
 
 - validates paths
+- prints the exact artifact storage locations
+- reports cache hit or rebuild-needed status
 - warns when VCD or RTL artifacts are large
 - prints the exact commands for the next steps
 
 If `--rtl-root` is available, include it. That is the preferred mode because it usually improves the quality and precision of the RTL-side diagnosis.
+
+### Where Artifacts Are Stored
+
+By default, this skill stores outputs under the skill root:
+
+```text
+hardware-debug-waveform/artifacts/
+├── authority/<fingerprint>/
+├── wave_db/<fingerprint>/
+└── packets/<fingerprint>/
+```
+
+The `<fingerprint>` is derived from the input files and key options.
+
+For example:
+
+- authority cache key uses the RTL tree signature and `--top`
+- waveform DB cache key uses the VCD file signature and `--window-len`
+
+You can still override the location explicitly with `--out-dir` or `--out`.
 
 ## Exposed Commands
 
@@ -119,9 +141,13 @@ Example:
 ```bash
 python scripts/hw_debug_cli.py build-authority \
   --rtl-root /path/to/build/rtl \
-  --top SimTop \
-  --out-dir /tmp/hw_debug_rtl_authority
+  --top SimTop
 ```
+
+Cache behavior:
+
+- if a matching cached authority artifact already exists, the command reuses it instead of rebuilding
+- add `--force` to rebuild anyway
 
 ### `build-wave-db`
 
@@ -139,9 +165,13 @@ Example:
 ```bash
 python scripts/hw_debug_cli.py build-wave-db \
   --vcd /path/to/run.vcd \
-  --out-dir /tmp/hw_wave_db \
   --window-len 1000
 ```
+
+Cache behavior:
+
+- if a matching cached waveform DB already exists, the command reuses it instead of rebuilding
+- add `--force` to rebuild anyway
 
 ### `query-packet`
 
