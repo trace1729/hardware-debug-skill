@@ -297,6 +297,7 @@ def _cmd_query_packet(args: argparse.Namespace) -> int:
             window_id=args.window_id,
             focus_scope=args.focus_scope,
         )
+    args.out.parent.mkdir(parents=True, exist_ok=True)
     args.out.write_text(json.dumps(packet, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     return 0
 
@@ -340,6 +341,7 @@ def _cmd_rough_map_chisel(args: argparse.Namespace) -> int:
         "mapping_path": str(args.mapping),
         "signals": joined_signals,
     }
+    args.out.parent.mkdir(parents=True, exist_ok=True)
     args.out.write_text(json.dumps(out_obj, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     return 0
 
