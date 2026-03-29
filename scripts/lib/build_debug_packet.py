@@ -105,6 +105,38 @@ def _load_signal_rows_sqlite(*, signal_db: str | Path, focus_scope: str | None =
     ]
 
 
+def _load_one_signal_row_sqlite(*, signal_db: str | Path, full_wave_path: str) -> dict[str, Any] | None:
+    conn = sqlite3.connect(signal_db)
+    try:
+        row = conn.execute(
+            """
+            select signal_id, scope_id, full_scope_path, full_wave_path, local_name, bit_width, value_kind
+            from signal_metadata
+            where full_wave_path = ?
+            """,
+            (full_wave_path,),
+        ).fetchone()
+    finally:
+        conn.close()
+    if row is None:
+        return None
+    return {
+        "signal_id": row[0],
+        "scope_id": row[1],
+        "full_scope_path": row[2],
+        "full_wave_path": row[3],
+        "local_name": row[4],
+        "bit_width": row[5],
+        "value_kind": row[6],
+    }
+
+
+def _window_numeric_id(window_id: str) -> int:
+    if not window_id.startswith("w"):
+        raise ValueError(f"invalid window id: {window_id}")
+    return int(window_id[1:])
+
+
 def _filter_signals_by_scope(*, signals: list[dict[str, Any]], focus_scope: str | None, scope_signal_index: dict[str, list[str]] | None = None) -> list[dict[str, Any]]:
     if not focus_scope:
         return signals
@@ -222,3 +254,83 @@ def build_debug_packet_from_manifest(*, manifest: dict[str, Any], authority: dic
         focus_scope=focus_scope,
         scope_already_filtered=scope_already_filtered,
     )
+
+
+def query_signal_value_from_manifest(*, manifest: dict[str, Any], full_wave_path: str, t: int) -> dict[str, Any]:
+    if t < 0:
+        raise ValueError("time must be >= 0")
+
+    signal_db_path = manifest["tables"].get("signal_metadata_db")
+    signals_path = manifest["tables"].get("signals")
+    signal_row = None
+    if signal_db_path:
+        signal_row = _load_one_signal_row_sqlite(signal_db=signal_db_path, full_wave_path=full_wave_path)
+    if signal_row is None and signals_path and Path(signals_path).exists():
+        for row in _load_json(signals_path):
+            if row.get("full_wave_path") == full_wave_path:
+                signal_row = row
+                break
+    if signal_row is None:
+        raise ValueError(f"signal not found in waveform metadata: {full_wave_path}")
+
+    windows = _load_json(manifest["tables"]["windows"])
+    if not windows:
+        raise ValueError("manifest has no windows")
+    target_window = next((window for window in windows if window["t_start"] <= t <= window["t_end"]), None)
+    if target_window is None:
+        raise ValueError(f"time {t} is outside the waveform window coverage")
+
+    signal_window_index = _load_json(manifest["tables"]["signal_window_index"])
+    relevant_signal_windows = [
+        row for row in signal_window_index
+        if row["signal_id"] == signal_row["signal_id"] and _window_numeric_id(row["window_id"]) <= _window_numeric_id(target_window["id"])
+    ]
+    relevant_signal_windows.sort(key=lambda row: _window_numeric_id(row["window_id"]), reverse=True)
+
+    window_index = _load_json(manifest["tables"]["window_index"])
+    shard_path_by_window = {row["window_id"]: row["path"] for row in window_index}
+
+    latest_change = None
+    for row in relevant_signal_windows:
+        shard_path = shard_path_by_window.get(row["window_id"])
+        if shard_path is None:
+            continue
+        with Path(shard_path).open("r", encoding="utf-8") as f:
+            for line in f:
+                if not line.strip():
+                    continue
+                change = json.loads(line)
+                if change.get("signal_id") != signal_row["signal_id"]:
+                    continue
+                if row["window_id"] == target_window["id"] and change["t"] > t:
+                    continue
+                if latest_change is None or change["t"] > latest_change["t"]:
+                    latest_change = change
+        if latest_change is not None:
+            break
+
+    return {
+        "version": "0.1",
+        "query": {
+            "full_wave_path": full_wave_path,
+            "t": t,
+        },
+        "signal": {
+            "signal_id": signal_row["signal_id"],
+            "full_wave_path": signal_row["full_wave_path"],
+            "local_name": signal_row.get("local_name"),
+            "bit_width": signal_row.get("bit_width"),
+            "value_kind": signal_row.get("value_kind"),
+        },
+        "window": {
+            "id": target_window["id"],
+            "t_start": target_window["t_start"],
+            "t_end": target_window["t_end"],
+        },
+        "value_at_time": {
+            "found": latest_change is not None,
+            "t": latest_change["t"] if latest_change is not None else None,
+            "value": latest_change["value"] if latest_change is not None else None,
+            "status": "ok" if latest_change is not None else "uninitialized_before_time",
+        },
+    }

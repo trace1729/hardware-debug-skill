@@ -163,6 +163,26 @@ python scripts/hw_debug_cli.py query-packet \
   --out /tmp/hw_packet.json
 ```
 
+### `query-signal-value`
+
+Queries one signal's value at one simulation time.
+
+Basic function:
+
+- resolves the signal from waveform metadata
+- finds the window containing the requested time
+- walks backward to the most recent change at or before that time
+- returns the value if known
+
+Example:
+
+```bash
+python scripts/hw_debug_cli.py query-signal-value \
+  --manifest /tmp/hw_wave_db/manifest.json \
+  --signal TOP.SimTop.core.rob.commit_valid \
+  --time 123456
+```
+
 ### `rough-map-chisel`
 
 Adds rough Chisel candidates to a packet by joining against an external rough mapping artifact.
@@ -575,11 +595,12 @@ Recommended order:
 2. Build the waveform DB.
 3. Build RTL authority if emitted RTL is available.
 4. Query a packet for one suspect window.
-5. Read `focus_signals[*].changes` as raw evidence, but summarize the pattern instead of echoing detailed value dumps.
-6. Treat `rtl.match_status == exact` as authoritative emitted RTL ownership.
-7. Use the matched RTL module and signal names to find the most relevant Scala/Chisel source and analyze that first.
-8. If rough Chisel mapping exists, present it only as a candidate, never as proven ownership.
-9. Only fall back to SystemVerilog when Scala/Chisel analysis cannot explain the behavior clearly enough.
+5. Use `query-signal-value` if you need the value of one signal at one exact time.
+6. Read `focus_signals[*].changes` as raw evidence, but summarize the pattern instead of echoing detailed value dumps.
+7. Treat `rtl.match_status == exact` as authoritative emitted RTL ownership.
+8. Use the matched RTL module and signal names to find the most relevant Scala/Chisel source and analyze that first.
+9. If rough Chisel mapping exists, present it only as a candidate, never as proven ownership.
+10. Only fall back to SystemVerilog when Scala/Chisel analysis cannot explain the behavior clearly enough.
 
 When writing the final debugging answer, keep artifact discussion very short.
 

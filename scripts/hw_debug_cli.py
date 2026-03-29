@@ -15,7 +15,7 @@ if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
 
-from lib.build_debug_packet import build_debug_packet_from_manifest
+from lib.build_debug_packet import build_debug_packet_from_manifest, query_signal_value_from_manifest
 from lib.build_rtl_authority import build_rtl_authority
 from lib.ingest_waveform import stream_waveform_store
 
@@ -234,6 +234,7 @@ def _cmd_inspect_inputs(args: argparse.Namespace) -> int:
         packet_cmd += f" --focus-scope {args.focus_scope}"
     print(packet_cmd)
     print(f"{_self_cmd()} rough-map-chisel --packet {packet_out} --mapping <rough-mapping.json> --out <rough-join.json>")
+    print(f"{_self_cmd()} query-signal-value --manifest {wave_out / 'manifest.json'} --signal <full-wave-path> --time <t>")
     print()
     print("How to map back")
     print("- Use query-packet to read waveform evidence by window.")
@@ -346,6 +347,21 @@ def _cmd_rough_map_chisel(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_query_signal_value(args: argparse.Namespace) -> int:
+    manifest = json.loads(args.manifest.read_text(encoding="utf-8"))
+    value_info = query_signal_value_from_manifest(
+        manifest=manifest,
+        full_wave_path=args.signal,
+        t=args.time,
+    )
+    if args.out is None:
+        print(json.dumps(value_info, indent=2, sort_keys=True))
+    else:
+        args.out.parent.mkdir(parents=True, exist_ok=True)
+        args.out.write_text(json.dumps(value_info, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="hw-debug-skill", description="Skill-local hardware debug CLI.")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -390,6 +406,13 @@ def build_parser() -> argparse.ArgumentParser:
     rough_p.add_argument("--mapping", required=True, type=Path)
     rough_p.add_argument("--out", required=True, type=Path)
     rough_p.set_defaults(func=_cmd_rough_map_chisel)
+
+    value_p = sub.add_parser("query-signal-value")
+    value_p.add_argument("--manifest", required=True, type=Path)
+    value_p.add_argument("--signal", required=True)
+    value_p.add_argument("--time", required=True, type=int)
+    value_p.add_argument("--out", type=Path)
+    value_p.set_defaults(func=_cmd_query_signal_value)
     return parser
 
 

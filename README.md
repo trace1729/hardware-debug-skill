@@ -162,6 +162,26 @@ python scripts/hw_debug_cli.py query-packet \
   --out /tmp/hw_packet.json
 ```
 
+### `query-signal-value`
+
+用于查询某个信号在某个仿真时刻的值。
+
+基础功能：
+
+- 先从 waveform metadata 解析目标信号
+- 找到包含该时刻的窗口
+- 向前回溯到该时刻及之前最近一次变更
+- 返回该时刻可确定的值
+
+示例：
+
+```bash
+python scripts/hw_debug_cli.py query-signal-value \
+  --manifest /tmp/hw_wave_db/manifest.json \
+  --signal TOP.SimTop.core.rob.commit_valid \
+  --time 123456
+```
+
 ### `rough-map-chisel`
 
 把外部 rough mapping 结果补到 packet 上，形成粗略的 Chisel 候选映射。
@@ -574,11 +594,12 @@ python scripts/hw_debug_cli.py rough-map-chisel \
 2. 构建 waveform DB。
 3. 如果有 emitted RTL，就构建 RTL authority。
 4. 针对可疑窗口生成 packet。
-5. 阅读 `focus_signals[*].changes` 作为原始证据，但输出时应总结变化模式，而不是展开详细数值转储。
-6. 对 `rtl.match_status == exact` 的条目，把它视为权威的 emitted RTL ownership。
-7. 用匹配到的 RTL 模块和信号名去搜索最相关的 Scala/Chisel 源码，并优先分析它。
-8. 如果有 rough Chisel mapping，只能把它当作候选，不要表述成已证明的 source ownership。
-9. 只有当 Scala/Chisel 仍然无法充分解释行为时，才回退去看 SystemVerilog。
+5. 如果需要查询某个信号在某个精确时刻的值，使用 `query-signal-value`。
+6. 阅读 `focus_signals[*].changes` 作为原始证据，但输出时应总结变化模式，而不是展开详细数值转储。
+7. 对 `rtl.match_status == exact` 的条目，把它视为权威的 emitted RTL ownership。
+8. 用匹配到的 RTL 模块和信号名去搜索最相关的 Scala/Chisel 源码，并优先分析它。
+9. 如果有 rough Chisel mapping，只能把它当作候选，不要表述成已证明的 source ownership。
+10. 只有当 Scala/Chisel 仍然无法充分解释行为时，才回退去看 SystemVerilog。
 
 在输出最终调试结论时，artifact 相关内容要尽量少。
 

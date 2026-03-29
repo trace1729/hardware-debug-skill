@@ -90,6 +90,17 @@ python scripts/hw_debug_cli.py query-packet \
 
 Use the window ID that covers the suspected failure. Check `windows.json` to find active windows if unsure.
 
+### Step 4b — (Optional) Query one signal value at one time
+
+```bash
+python scripts/hw_debug_cli.py query-signal-value \
+  --manifest <wave-out>/manifest.json \
+  --signal TOP.SimTop.core.rob.commit_valid \
+  --time 123456
+```
+
+Use this when you need the value of one specific signal at one specific simulation time.
+
 ### Step 5 — (Optional) Add rough Chisel candidates
 
 ```bash
@@ -110,6 +121,8 @@ Only run this step if a rough mapping artifact is available. Treat results as gu
 5. Present rough Chisel candidates from step 5 only as secondary, lower-confidence hints.
 6. Only inspect generated SystemVerilog if Scala cannot explain the behavior.
 
+If you need a point lookup instead of a window summary, use `query-signal-value`.
+
 
 ## Output
 
@@ -119,7 +132,6 @@ Write the answer in two parts:
 
 - For a debug request:
   - `Phenomenon`: one sentence describing the anomaly seen in the waveform
-  - `Location`: the most likely failing module, sub-block, or signal region
   - `Root Cause Category`: a standard hardware bug class such as state machine deadlock, data hazard, backpressure stall, or flush-handling miss
   - `Confidence`: state whether this is high confidence or low confidence
 - For an exploration request:
@@ -129,17 +141,13 @@ Write the answer in two parts:
 
 **Detailed Analysis**
 
-- Expand the summary instead of repeating it.
 - For a debug request:
-  - summarize the waveform pattern, not raw per-cycle values
-  - explain the RTL ownership and the relevant Scala/Chisel logic
-  - explain the likely root cause
-  - give a fix recommendation if confidence is high
-  - otherwise give the next best debugging steps
+  - expand the `Root Cause Category` part of summary
+   1. find relevant waveform and Scala/Chisel logic to support the root cause assumption
+   2. give a fix recommendation if confidence is high
+   3. otherwise give the next best debugging steps
 - For an exploration request:
-  - explain the observed behavior in architecture terms
-  - connect the waveform evidence to the RTL owner and then to the Scala/Chisel implementation
-  - recommend the next useful file, submodule, or concept to inspect
+  -  find relevant waveform evidence and Scala/Chisel implementation to support your summary on `function`, `structure`, `interconnect` respectively.
 
 Use precise terms in the detailed analysis:
 
