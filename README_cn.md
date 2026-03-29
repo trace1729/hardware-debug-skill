@@ -4,6 +4,12 @@
 
 基于vcd构建层次化的数据文件，基于build/rtl 构建 chisel -> verilog 信号映射，从而让LLM更好的根据波形调试。
 
+当 `build/rtl` 可用时，推荐明确区分两类用途：
+
+- emitted RTL 用来构建持久化的 exact ownership 存储
+- Scala/Chisel 源码优先用于实际调试分析
+- 只有当 Scala 不足以解释行为时，才回退去看 SystemVerilog
+
 
 ## 如何使用
 
@@ -113,6 +119,12 @@ python scripts/hw_debug_cli.py build-authority \
 - 如果已经存在匹配的 authority artifact，就直接复用，不再重建
 - 如果你想强制重建，增加 `--force`
 
+这个步骤的主要定位：
+
+- 用于持久化保存精确的 waveform-to-RTL ownership
+- 不是人或 LLM 首选的推理阅读材料
+- 一旦定位到 ownership，后续分析应优先转到相关 Scala/Chisel 源码
+
 ### `build-wave-db`
 
 把 VCD 转成规范化的波形数据库。
@@ -196,6 +208,8 @@ python scripts/hw_debug_cli.py rough-map-chisel \
 
 如果 `build/rtl` 可用，应优先走这一条路径，因为它能实质性提高映射准确率。
 
+但这一阶段的主要价值是索引和 ownership 恢复，不是主要的源码级推理入口。
+
 总体流程：
 
 1. 递归发现 `build/rtl` 下的 emitted RTL 文件。
@@ -211,6 +225,12 @@ python scripts/hw_debug_cli.py rough-map-chisel \
 - 拿到 instance path
 - 拿到 local RTL signal name
 - 拿到源 RTL 文件
+
+这些结果应如何使用：
+
+- 先用它定位正确的模块和信号区域
+- 然后优先去搜索相关 Scala/Chisel 源码
+- 只有当 Scala 仍然解释不清时，再去阅读 generated SystemVerilog
 
 ### 阶段二：VCD 预处理
 
@@ -573,15 +593,24 @@ python scripts/hw_debug_cli.py rough-map-chisel \
 4. 针对可疑窗口生成 packet。
 5. 阅读 `focus_signals[*].changes` 作为原始证据，但输出时应总结变化模式，而不是展开详细数值转储。
 6. 对 `rtl.match_status == exact` 的条目，把它视为权威的 emitted RTL ownership。
-7. 如果有 rough Chisel mapping，只能把它当作候选，不要表述成已证明的 source ownership。
+7. 用匹配到的 RTL 模块和信号名去搜索最相关的 Scala/Chisel 源码，并优先分析它。
+8. 如果有 rough Chisel mapping，只能把它当作候选，不要表述成已证明的 source ownership。
+9. 只有当 Scala/Chisel 仍然无法充分解释行为时，才回退去看 SystemVerilog。
 
 在输出最终调试结论时，artifact 相关内容要尽量少。
 
 推荐输出结构：
 
 - 先用一句很短的话说明当前是 `exact RTL mode` 还是 `waveform-only mode`
-- 然后主要聚焦可疑 RTL 模块、紧凑的波形变化模式总结，以及可能的故障机理
+- 然后主要聚焦可疑 RTL 模块、紧凑的波形变化模式总结，以及基于 Scala/Chisel 的可能故障机理
 - 如果 rough Chisel candidate 有帮助，再作为很小的补充带上
+
+最终回答应当先给出一个简洁总结，然后再给出展开这个总结的详细分析。
+
+术语上应尽量精确：
+
+- 描述信号和时序时，优先使用数字电路术语，例如 `rising edge`、`falling edge`、`handshake`、`backpressure`、`stall`、`flush`、`valid`、`ready`
+- 描述整体设计和行为时，优先使用计算机体系结构术语，例如 `pipeline stage`、`hazard detection`、`forwarding`、`cache hierarchy`、`fetch/decode/execute`、`instruction set architecture`、`bus arbitration`、`memory consistency`、`commit/retire`
 
 尽量不要把篇幅花在下面这些内容上：
 
@@ -589,6 +618,7 @@ python scripts/hw_debug_cli.py rough-map-chisel \
 - 大段文件路径
 - 很长的精确信号列表
 - 逐周期原始数值变化
+- 很长的 generated SystemVerilog 片段
 - 预处理实现细节
 - schema 说明
 

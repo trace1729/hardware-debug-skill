@@ -4,6 +4,12 @@
 
 This skill is a portable hardware-debug workflow for large VCD waveforms: it validates inputs, builds an exact RTL authority table from emitted RTL when available, converts the waveform into a queryable database, and generates compact debug packets that bundle waveform evidence with hierarchy and ownership hints.
 
+When `build/rtl` is available, the intended split is:
+
+- emitted RTL is used to build persistent exact ownership storage
+- Scala/Chisel source is used first for actual debugging analysis
+- SystemVerilog is only a fallback when Scala is not enough
+
 
 ## How to use
 
@@ -113,6 +119,12 @@ Cache behavior:
 - if a matching cached authority artifact already exists, the command reuses it instead of rebuilding
 - add `--force` to rebuild anyway
 
+Important role:
+
+- this step is for persistent exact waveform-to-RTL ownership
+- it is not the preferred source for human or LLM reasoning
+- after ownership is known, analysis should move to the relevant Scala/Chisel code first
+
 ### `build-wave-db`
 
 Builds a canonical waveform database from the VCD.
@@ -196,6 +208,8 @@ This phase is optional, but it provides exact RTL ownership and is the strongest
 
 If `build/rtl` is available, this should be treated as the preferred path because it materially improves mapping accuracy.
 
+However, its main purpose is indexing and ownership recovery, not primary source-level reasoning.
+
 General flow:
 
 1. Recursively discover emitted RTL files under `build/rtl`.
@@ -211,6 +225,12 @@ What this phase gives you:
 - instance path
 - local RTL signal name
 - source RTL file
+
+How to use that output:
+
+- use it to identify the right module and signal region
+- then search the relevant Scala/Chisel source first
+- avoid diving into generated SystemVerilog unless Scala leaves an important gap
 
 ### Phase 2: VCD Preprocessing
 
@@ -573,15 +593,24 @@ Recommended order:
 4. Query a packet for one suspect window.
 5. Read `focus_signals[*].changes` as raw evidence, but summarize the pattern instead of echoing detailed value dumps.
 6. Treat `rtl.match_status == exact` as authoritative emitted RTL ownership.
-7. If rough Chisel mapping exists, present it only as a candidate, never as proven ownership.
+7. Use the matched RTL module and signal names to find the most relevant Scala/Chisel source and analyze that first.
+8. If rough Chisel mapping exists, present it only as a candidate, never as proven ownership.
+9. Only fall back to SystemVerilog when Scala/Chisel analysis cannot explain the behavior clearly enough.
 
 When writing the final debugging answer, keep artifact discussion very short.
 
 Preferred answer shape:
 
 - one short line on artifact mode, for example `exact RTL mode` or `waveform-only mode`
-- then focus mainly on suspected RTL module, a compact summary of the waveform change pattern, and the likely mechanism
+- then focus mainly on suspected RTL module, a compact summary of the waveform change pattern, and the likely mechanism from Scala/Chisel analysis
 - include rough Chisel candidates only as a small follow-up when useful
+
+The final answer should start with a concise summary, followed by a more detailed analysis section that expands the summary.
+
+Use precise terminology:
+
+- for signals and timing, prefer digital-circuit terms such as `rising edge`, `falling edge`, `handshake`, `backpressure`, `stall`, `flush`, `valid`, and `ready`
+- for the design and behavior, prefer computer-architecture terms such as `pipeline stage`, `hazard detection`, `forwarding`, `cache hierarchy`, `fetch/decode/execute`, `instruction set architecture`, `bus arbitration`, `memory consistency`, and `commit/retire`
 
 Avoid spending much space on:
 
@@ -589,6 +618,7 @@ Avoid spending much space on:
 - file path dumps
 - long exact-signal listings
 - raw per-cycle value transitions
+- long generated SystemVerilog excerpts
 - preprocessing mechanics
 - schema details
 
