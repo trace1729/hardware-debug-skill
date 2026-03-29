@@ -1,17 +1,19 @@
 # Hardware Debug Waveform Skill
 
-## Summary
+## 总结
 
-This skill is a portable hardware-debug workflow for large VCD waveforms: it validates inputs, builds an exact RTL authority table from emitted RTL when available, converts the waveform into a queryable database, and generates compact debug packets that bundle waveform evidence with hierarchy and ownership hints.
+基于vcd构建层次化的数据文件，基于build/rtl 构建 chisel -> verilog 信号映射，从而让LLM更好的根据波形调试。
 
-When `build/rtl` is available, the intended split is:
+当 `build/rtl` 可用时，推荐明确区分两类用途：
 
-- emitted RTL is used to build persistent exact ownership storage
-- Scala/Chisel source is used first for actual debugging analysis
-- SystemVerilog is only a fallback when Scala is not enough
+- emitted RTL 用来构建持久化的 exact ownership 存储
+- Scala/Chisel 源码优先用于实际调试分析
+- 只有当 Scala 不足以解释行为时，才回退去看 SystemVerilog
 
 
-## How to use
+## 如何使用
+
+### 安装skill
 
 ```
 mkdir -p ~/.codex/skills/
@@ -24,48 +26,25 @@ codex
 $Hardware Debug Waveform
 ```
 
-## Layout
+### 输入
 
-```text
-hardware-debug-waveform/
-├── SKILL.md
-├── README.md
-├── README_cn.md
-└── scripts/
-    ├── hw_debug_cli.py
-    ├── plan_hw_debug_artifacts.py
-    └── lib/
-        ├── build_rtl_authority.py
-        ├── ingest_waveform.py
-        ├── build_debug_packet.py
-        ├── rtl_parse_modules.py
-        ├── rtl_build_hierarchy.py
-        └── stream_vcd_reader.py
-```
+这个 skill 期望的输入为：
 
-## How To Use The Skill
+- `--vcd`：VCD 波形文件路径
+- `--scala-root`：Chisel 源码树路径，通常是 `src/main/scala/xiangshan`
+- `--rtl-root`：可选，emitted RTL 路径，通常是 `build/rtl`
+
+可选输入：
+
+- `--focus-scope`：指定要聚焦的波形层级 scope
+- `--suggestion`：人工提供的调试提示，比如 `hang near dispatch`
+- `--top`：RTL 顶层模块名，默认 `SimTop`
+- `--window-len`：波形切窗长度，默认 `1000`
 
 
-### Inputs
+### 构建的临时产物存放位置
 
-The skill expects:
-
-- `--vcd`: path to the waveform VCD file
-- `--scala-root`: path to the Chisel source tree, usually `src/main/scala/xiangshan`
-- `--rtl-root`: optional path to emitted RTL, usually `build/rtl`
-
-Optional inputs:
-
-- `--focus-scope`: a waveform hierarchy scope to narrow analysis
-- `--suggestion`: a human hint such as `hang near dispatch` or `wrong commit behavior`
-- `--top`: RTL top module name, default `SimTop`
-- `--window-len`: window size for waveform preprocessing, default `1000`
-
-
-
-### Where Artifacts Are Stored
-
-By default, this skill stores outputs under the skill root:
+默认情况下，这个 skill 会把输出放在 skill 根目录下：
 
 ```text
 hardware-debug-waveform/artifacts/
@@ -74,39 +53,43 @@ hardware-debug-waveform/artifacts/
 └── packets/<fingerprint>/
 ```
 
-The `<fingerprint>` is derived from the input files and key options.
+这里的 `<fingerprint>` 由输入文件和关键选项共同决定。
 
-For example:
+例如：
 
-- authority cache key uses the RTL tree signature and `--top`
-- waveform DB cache key uses the VCD file signature and `--window-len`
+- authority 的 cache key 取决于 RTL 树签名和 `--top`
+- waveform DB 的 cache key 取决于 VCD 文件签名和 `--window-len`
 
-You can still override the location explicitly with `--out-dir` or `--out`.
+如果需要，你仍然可以通过 `--out-dir` 或 `--out` 显式改写输出位置。
 
-## Exposed Commands
+---
+
+> 以下是skill细节部分，可忽略
+
+## 子命令
 
 ### `inspect-inputs`
 
-Checks inputs and prints the recommended command sequence.
+用于检查输入，并打印推荐的命令序列。
 
-Basic function:
+基础功能：
 
-- verifies that the provided paths exist
-- prints tree size and VCD size
-- warns when preprocessing may be expensive
-- supports waveform-only analysis if `--rtl-root` is omitted
+- 检查路径是否有效
+- 输出文件树大小和 VCD 文件大小
+- 当预处理成本较高时给出告警
+- 如果没有 `--rtl-root`，自动进入 waveform-only 分析模式
 
 ### `build-authority`
 
-Builds an exact RTL authority table from emitted RTL.
+从 emitted RTL 构建精确的 RTL authority 表。
 
-Basic function:
+基础功能：
 
-- parses `.sv` and `.v` files under `--rtl-root`
-- extracts modules, declarations, and instance hierarchy
-- emits an exact hierarchical signal ownership database
+- 递归解析 `--rtl-root` 下的 `.sv` 和 `.v`
+- 抽取模块、信号声明和实例层级
+- 生成精确的层级化 RTL 信号 ownership 数据库
 
-Example:
+示例：
 
 ```bash
 python scripts/hw_debug_cli.py build-authority \
@@ -114,29 +97,29 @@ python scripts/hw_debug_cli.py build-authority \
   --top SimTop
 ```
 
-Cache behavior:
+缓存行为：
 
-- if a matching cached authority artifact already exists, the command reuses it instead of rebuilding
-- add `--force` to rebuild anyway
+- 如果已经存在匹配的 authority artifact，就直接复用，不再重建
+- 如果你想强制重建，增加 `--force`
 
-Important role:
+这个步骤的主要定位：
 
-- this step is for persistent exact waveform-to-RTL ownership
-- it is not the preferred source for human or LLM reasoning
-- after ownership is known, analysis should move to the relevant Scala/Chisel code first
+- 用于持久化保存精确的 waveform-to-RTL ownership
+- 不是人或 LLM 首选的推理阅读材料
+- 一旦定位到 ownership，后续分析应优先转到相关 Scala/Chisel 源码
 
 ### `build-wave-db`
 
-Builds a canonical waveform database from the VCD.
+把 VCD 转成规范化的波形数据库。
 
-Basic function:
+基础功能：
 
-- parses VCD metadata
-- captures all traced signals in the VCD header
-- streams value changes into time windows
-- materializes metadata and query indexes on disk
+- 解析 VCD header
+- 捕获 header 中声明的全部 traced signal
+- 流式读取 value change
+- 按时间窗口落盘成可查询的索引和数据分片
 
-Example:
+示例：
 
 ```bash
 python scripts/hw_debug_cli.py build-wave-db \
@@ -144,22 +127,22 @@ python scripts/hw_debug_cli.py build-wave-db \
   --window-len 1000
 ```
 
-Cache behavior:
+缓存行为：
 
-- if a matching cached waveform DB already exists, the command reuses it instead of rebuilding
-- add `--force` to rebuild anyway
+- 如果已经存在匹配的 waveform DB artifact，就直接复用，不再重建
+- 如果你想强制重建，增加 `--force`
 
 ### `query-packet`
 
-Builds a compact debug packet for one waveform window.
+针对一个时间窗口生成紧凑的 debug packet。
 
-Basic function:
+基础功能：
 
-- loads waveform metadata and changes for one window
-- optionally joins exact RTL ownership from an authority database
-- emits a compact packet suitable for LLM analysis
+- 读取一个窗口对应的波形变化
+- 可选地关联 exact RTL authority
+- 生成适合给 LLM 消费的紧凑 JSON 包
 
-Example with exact RTL:
+带 exact RTL 的示例：
 
 ```bash
 python scripts/hw_debug_cli.py query-packet \
@@ -170,7 +153,7 @@ python scripts/hw_debug_cli.py query-packet \
   --out /tmp/hw_packet.json
 ```
 
-Example in waveform-only mode:
+waveform-only 模式示例：
 
 ```bash
 python scripts/hw_debug_cli.py query-packet \
@@ -181,15 +164,15 @@ python scripts/hw_debug_cli.py query-packet \
 
 ### `rough-map-chisel`
 
-Adds rough Chisel candidates to a packet by joining against an external rough mapping artifact.
+把外部 rough mapping 结果补到 packet 上，形成粗略的 Chisel 候选映射。
 
-Basic function:
+基础功能：
 
-- reads a packet
-- joins on `rtl.module_type + rtl.local_signal_name`
-- emits rough Chisel candidates without claiming exact source truth
+- 读取 packet
+- 通过 `rtl.module_type + rtl.local_signal_name` 做 join
+- 输出 rough Chisel candidate，但不宣称为精确来源
 
-Example:
+示例：
 
 ```bash
 python scripts/hw_debug_cli.py rough-map-chisel \
@@ -198,108 +181,108 @@ python scripts/hw_debug_cli.py rough-map-chisel \
   --out /tmp/hw_packet_rough.json
 ```
 
-## General Pipeline
+## 总体流水线
 
-The pipeline has three main phases.
+整个流程分为三个主阶段。
 
-### Phase 1: RTL Parsing
+### 阶段一：RTL 解析
 
-This phase is optional, but it provides exact RTL ownership and is the strongest mapping layer.
+这一阶段是可选的，但它提供最强的 exact RTL ownership。
 
-If `build/rtl` is available, this should be treated as the preferred path because it materially improves mapping accuracy.
+如果 `build/rtl` 可用，应优先走这一条路径，因为它能实质性提高映射准确率。
 
-However, its main purpose is indexing and ownership recovery, not primary source-level reasoning.
+但这一阶段的主要价值是索引和 ownership 恢复，不是主要的源码级推理入口。
 
-General flow:
+总体流程：
 
-1. Recursively discover emitted RTL files under `build/rtl`.
-2. Parse module definitions and signal declarations.
-3. Build instance hierarchy starting from `--top`.
-4. Expand module-local signals into exact hierarchical RTL signal names.
-5. Store those results in JSON and SQLite artifacts.
+1. 递归发现 `build/rtl` 下的 emitted RTL 文件。
+2. 解析模块定义和信号声明。
+3. 从 `--top` 开始构建实例层级。
+4. 把模块内的本地信号展开成精确的层级化 RTL 信号名。
+5. 将结果写入 JSON 和 SQLite artifact。
 
-What this phase gives you:
+这一阶段产出的价值：
 
-- exact waveform-visible RTL ownership when names match
-- module type
-- instance path
-- local RTL signal name
-- source RTL file
+- 当名字能对上时，可以得到精确的 waveform-visible RTL ownership
+- 拿到 module type
+- 拿到 instance path
+- 拿到 local RTL signal name
+- 拿到源 RTL 文件
 
-How to use that output:
+这些结果应如何使用：
 
-- use it to identify the right module and signal region
-- then search the relevant Scala/Chisel source first
-- avoid diving into generated SystemVerilog unless Scala leaves an important gap
+- 先用它定位正确的模块和信号区域
+- 然后优先去搜索相关 Scala/Chisel 源码
+- 只有当 Scala 仍然解释不清时，再去阅读 generated SystemVerilog
 
-### Phase 2: VCD Preprocessing
+### 阶段二：VCD 预处理
 
-This phase is the canonical waveform ingestion stage.
+这一阶段是规范化波形存储的核心。
 
-General flow:
+总体流程：
 
-1. Parse the VCD header to collect scopes and traced signals.
-2. Assign stable internal IDs such as `sigN` and `scopeN`.
-3. Stream all value changes from the VCD body.
-4. Partition changes into fixed time windows such as `w0`, `w1`, `w2`.
-5. Build metadata files and indexes for quick lookup.
+1. 解析 VCD header，收集 scope 和 traced signal。
+2. 为每个对象分配稳定内部 ID，比如 `sigN`、`scopeN`。
+3. 流式遍历 VCD body 中所有 value change。
+4. 按固定时间窗口切分，例如 `w0`、`w1`、`w2`。
+5. 建立后续快速查询所需的 metadata 和 index。
 
-What this phase gives you:
+这一阶段产出的价值：
 
-- full signal inventory from the VCD header
-- full scope inventory
-- queryable signal metadata
-- per-window value changes
-- per-signal/per-window activity summaries
+- VCD header 中所有信号的完整清单
+- 完整的 scope 清单
+- 可查询的信号元数据
+- 按窗口组织的 value change
+- 每个信号在每个窗口中的活动摘要
 
-### Phase 3: Packet Generation
+### 阶段三：Packet 生成
 
-This phase packages only the evidence needed for one debug slice.
+这一阶段把一个时间片所需的证据压缩成 LLM 友好的形式。
 
-General flow:
+总体流程：
 
-1. Select one window, for example `w42`.
-2. Load the change shard for that window.
-3. Optionally narrow to `--focus-scope`.
-4. Join exact RTL ownership if an authority database is available.
-5. Emit a compact JSON packet for LLM consumption.
+1. 选择一个窗口，比如 `w42`。
+2. 读取该窗口对应的 change shard。
+3. 可选地用 `--focus-scope` 缩小范围。
+4. 如果 authority 数据库存在，就 join exact RTL ownership。
+5. 输出一个适合 LLM 分析的紧凑 JSON packet。
 
-What this phase gives you:
+这一阶段产出的价值：
 
-- time range summary
-- touched signals in the selected window
-- exact RTL ownership where available
-- unresolved signals where ownership could not be proven
+- 时间范围摘要
+- 当前窗口真正发生变化的信号
+- 若可用则附带 exact RTL ownership
+- 若无法证明 ownership，则明确标记 unresolved
 
-## Main Artifacts And Schemas
+## 主要 Artifact 与 Schema
 
-### RTL Authority Artifacts
+### RTL Authority 相关 Artifact
 
 #### `rtl_authority.sqlite3`
 
-Primary exact RTL lookup database.
+这是主要的 exact RTL 查询数据库。
 
-Table: `authority_lookup`
+表名：`authority_lookup`
 
-- `full_signal_name`: exact hierarchical RTL signal name
-- `module_type`: emitted RTL module type that owns the signal
-- `instance_path`: hierarchical instance path of the owning instance
-- `local_signal_name`: signal name local to the module
-- `signal_kind`: declaration kind such as wire/reg/port
-- `direction`: port direction if applicable
-- `decl_width_bits`: declared bit width
-- `source_file`: emitted RTL file that declared the signal
-- `provenance`: currently `emitted_rtl_exact`
+- `full_signal_name`：精确的层级化 RTL 信号名
+- `module_type`：拥有该信号的 emitted RTL 模块类型
+- `instance_path`：拥有该信号的实例层级路径
+- `local_signal_name`：模块内部的本地信号名
+- `signal_kind`：声明类型，例如 wire/reg/port
+- `direction`：若是端口，则记录方向
+- `decl_width_bits`：声明位宽
+- `source_file`：声明该信号的 emitted RTL 文件
+- `provenance`：当前固定为 `emitted_rtl_exact`
 
-Primary use:
+主要用途：
 
-- exact lookup from waveform path to emitted RTL owner
+- 从 waveform path 精确查到 emitted RTL owner
 
 #### `rtl_authority_table.json`
 
-Full JSON export of the authority extraction.
+这是 authority 结果的完整 JSON 导出。
 
-Top-level structure:
+顶层结构：
 
 - `version`
 - `top`
@@ -308,20 +291,20 @@ Top-level structure:
 - `signals`
 - `coverage_gaps`
 
-`summary` contains:
+`summary` 包含：
 
 - `rtl_file_count`
 - `module_count`
 - `signal_count`
 - `cached_module_template_count`
 
-Each row in `signals` contains the same fields as `authority_lookup`.
+`signals` 中每一项字段与 `authority_lookup` 表一致。
 
 #### `rtl_authority_index.json`
 
-Dictionary form keyed by exact hierarchical signal name.
+这是以精确层级信号名为 key 的字典版本。
 
-Shape:
+结构示意：
 
 ```json
 {
@@ -339,36 +322,36 @@ Shape:
 }
 ```
 
-Primary use:
+主要用途：
 
-- simple JSON-based exact lookup when SQLite is not convenient
+- 不方便使用 SQLite 时，直接用 JSON 做 exact lookup
 
-### Waveform DB Artifacts
+### Waveform DB 相关 Artifact
 
 #### `manifest.json`
 
-Entry point for the waveform database.
+这是整个 waveform DB 的入口文件。
 
-Top-level structure:
+顶层结构：
 
 - `version`
 - `waveform`
 - `summary`
 - `tables`
 
-`waveform` contains:
+`waveform` 包含：
 
 - `path`
 - `format`
 
-`summary` contains:
+`summary` 包含：
 
 - `signal_count`
 - `scope_count`
 - `window_count`
 - `change_count`
 
-`tables` contains paths to the other artifacts:
+`tables` 记录其它 artifact 的路径：
 
 - `signals`
 - `signal_metadata_db`
@@ -381,35 +364,35 @@ Top-level structure:
 
 #### `signals.json`
 
-Signal inventory collected from the VCD header.
+这是从 VCD header 提取出的信号清单。
 
-Each row contains:
+每条记录包含：
 
-- `signal_id`: stable internal ID like `sig123`
-- `vcd_id_code`: compact VCD symbol
-- `scope_id`: owning scope ID
-- `full_wave_path`: full hierarchical waveform path
-- `local_name`: local signal name inside its scope
+- `signal_id`：稳定内部 ID，例如 `sig123`
+- `vcd_id_code`：VCD 使用的短符号
+- `scope_id`：所属 scope ID
+- `full_wave_path`：完整层级波形路径
+- `local_name`：该 scope 内的本地信号名
 - `bit_width`
-- `value_kind`: `scalar` or `vector`
+- `value_kind`：`scalar` 或 `vector`
 
 #### `scopes.json`
 
-Hierarchy inventory collected from the VCD header.
+这是从 VCD header 提取出的层级 scope 清单。
 
-Each row contains:
+每条记录包含：
 
-- `scope_id`: stable internal ID like `scope12`
-- `full_scope_path`: full hierarchical scope path
+- `scope_id`：稳定内部 ID，例如 `scope12`
+- `full_scope_path`：完整层级 scope 路径
 - `parent_scope_id`
 - `scope_kind`
 - `local_name`
 
 #### `scope_signal_index.json`
 
-Scope-to-signal index.
+这是 scope 到 signal 的索引。
 
-Shape:
+结构示意：
 
 ```json
 {
@@ -417,15 +400,15 @@ Shape:
 }
 ```
 
-Primary use:
+主要用途：
 
-- quickly enumerate which signals belong to a given scope
+- 快速列出某个 scope 下有哪些 signal
 
 #### `signal_metadata.sqlite3`
 
-Queryable signal metadata database.
+这是可查询的 signal metadata 数据库。
 
-Table: `signal_metadata`
+表名：`signal_metadata`
 
 - `signal_id`
 - `scope_id`
@@ -435,45 +418,45 @@ Table: `signal_metadata`
 - `bit_width`
 - `value_kind`
 
-Primary use:
+主要用途：
 
-- query signal metadata by scope or signal path without loading large JSON files
+- 按 scope 或 signal path 查询元数据，而不必一次性加载较大的 JSON
 
 #### `windows.json`
 
-Summary of each time window.
+这是每个时间窗口的摘要。
 
-Each row contains:
+每条记录包含：
 
-- `id`: window ID such as `w42`
+- `id`：窗口 ID，例如 `w42`
 - `t_start`
 - `t_end`
 - `change_count`
 - `active_signal_count`
 
-Primary use:
+主要用途：
 
-- identify active or interesting windows before opening full change shards
+- 在打开具体 change shard 前，先找活跃或可疑的窗口
 
 #### `window_index.json`
 
-Maps each window to its on-disk change shard.
+这是窗口到磁盘分片文件的映射。
 
-Each row contains:
+每条记录包含：
 
 - `window_id`
 - `path`
 - `change_count`
 
-Primary use:
+主要用途：
 
-- locate the JSONL file for a chosen window quickly
+- 快速定位某个窗口对应的 JSONL 数据分片
 
 #### `signal_window_index.json`
 
-Per-signal/per-window summary index.
+这是按“信号-窗口”组织的摘要索引。
 
-Each row contains:
+每条记录包含：
 
 - `signal_id`
 - `window_id`
@@ -481,33 +464,33 @@ Each row contains:
 - `last_t`
 - `change_count`
 
-Primary use:
+主要用途：
 
-- answer whether a given signal changed in a given window
-- find the first and last change time for that signal within the window
+- 判断某个 signal 是否在某个窗口发生变化
+- 查看该 signal 在该窗口中的第一次和最后一次变化时间
 
 #### `changes/by_window/wN.jsonl`
 
-Raw change shard for one window.
+这是某一个窗口对应的原始 change shard。
 
-Each line contains:
+每一行包含：
 
-- `t`: simulation time
+- `t`：仿真时间
 - `signal_id`
 - `window_id`
 - `value`
 
-Primary use:
+主要用途：
 
-- reconstruct detailed waveform activity for that time slice
+- 重建这一时间片内更细粒度的波形活动
 
-### Packet Artifacts
+### Packet 相关 Artifact
 
 #### `packet.json`
 
-Compact debug packet for one query window.
+这是单次查询生成的紧凑 debug packet。
 
-Top-level structure:
+顶层结构：
 
 - `version`
 - `query`
@@ -515,19 +498,19 @@ Top-level structure:
 - `focus_signals`
 - `notes`
 
-`query` contains:
+`query` 包含：
 
 - `window_id`
 - `focus_scope`
 
-`window_summary` contains:
+`window_summary` 包含：
 
 - `t_start`
 - `t_end`
 - `change_count`
 - `active_signal_count`
 
-Each row in `focus_signals` contains:
+`focus_signals` 中每一项包含：
 
 - `signal_id`
 - `full_wave_path`
@@ -535,109 +518,109 @@ Each row in `focus_signals` contains:
 - `changes`
 - `rtl`
 
-Each row in `changes` contains:
+`changes` 中每一项包含：
 
 - `t`
 - `signal_id`
 - `window_id`
 - `value`
 
-`rtl` is either:
+`rtl` 有两种情况：
 
-- exact:
+- exact：
   - `match_status: exact`
   - `module_type`
   - `source_file`
   - `local_signal_name`
-- unresolved:
+- unresolved：
   - `match_status: unresolved`
 
-`notes` may contain unresolved-count summaries.
+`notes` 可能包含 unresolved 数量摘要。
 
 #### `rough-join.json`
 
-Packet plus rough Chisel candidates.
+这是补上 rough Chisel candidate 后的结果。
 
-Top-level structure:
+顶层结构：
 
 - `version`
 - `packet_path`
 - `mapping_path`
 - `signals`
 
-Each row in `signals` contains:
+`signals` 中每一项包含：
 
 - `full_wave_path`
 - `rtl`
 - `rough_chisel`
 
-`rough_chisel` is either:
+`rough_chisel` 有两种情况：
 
-- rough:
+- rough：
   - `match_status: rough`
   - `chisel_module`
   - `chisel_path`
   - `rtl_module`
   - `rtl_signal`
   - `notes`
-- unresolved:
+- unresolved：
   - `match_status: unresolved`
 
-## How The LLM Should Use These Artifacts
+## LLM 应该如何使用这些 Artifact
 
-Recommended order:
+推荐顺序：
 
-1. Run `inspect-inputs`.
-2. Build the waveform DB.
-3. Build RTL authority if emitted RTL is available.
-4. Query a packet for one suspect window.
-5. Read `focus_signals[*].changes` as raw evidence, but summarize the pattern instead of echoing detailed value dumps.
-6. Treat `rtl.match_status == exact` as authoritative emitted RTL ownership.
-7. Use the matched RTL module and signal names to find the most relevant Scala/Chisel source and analyze that first.
-8. If rough Chisel mapping exists, present it only as a candidate, never as proven ownership.
-9. Only fall back to SystemVerilog when Scala/Chisel analysis cannot explain the behavior clearly enough.
+1. 先运行 `inspect-inputs`。
+2. 构建 waveform DB。
+3. 如果有 emitted RTL，就构建 RTL authority。
+4. 针对可疑窗口生成 packet。
+5. 阅读 `focus_signals[*].changes` 作为原始证据，但输出时应总结变化模式，而不是展开详细数值转储。
+6. 对 `rtl.match_status == exact` 的条目，把它视为权威的 emitted RTL ownership。
+7. 用匹配到的 RTL 模块和信号名去搜索最相关的 Scala/Chisel 源码，并优先分析它。
+8. 如果有 rough Chisel mapping，只能把它当作候选，不要表述成已证明的 source ownership。
+9. 只有当 Scala/Chisel 仍然无法充分解释行为时，才回退去看 SystemVerilog。
 
-When writing the final debugging answer, keep artifact discussion very short.
+在输出最终调试结论时，artifact 相关内容要尽量少。
 
-Preferred answer shape:
+推荐输出结构：
 
-- one short line on artifact mode, for example `exact RTL mode` or `waveform-only mode`
-- then focus mainly on suspected RTL module, a compact summary of the waveform change pattern, and the likely mechanism from Scala/Chisel analysis
-- include rough Chisel candidates only as a small follow-up when useful
+- 先用一句很短的话说明当前是 `exact RTL mode` 还是 `waveform-only mode`
+- 然后主要聚焦可疑 RTL 模块、紧凑的波形变化模式总结，以及基于 Scala/Chisel 的可能故障机理
+- 如果 rough Chisel candidate 有帮助，再作为很小的补充带上
 
-The final answer should start with a concise summary, followed by a more detailed analysis section that expands the summary.
+最终回答应当先给出一个简洁总结，然后再给出展开这个总结的详细分析。
 
-Use precise terminology:
+术语上应尽量精确：
 
-- for signals and timing, prefer digital-circuit terms such as `rising edge`, `falling edge`, `handshake`, `backpressure`, `stall`, `flush`, `valid`, and `ready`
-- for the design and behavior, prefer computer-architecture terms such as `pipeline stage`, `hazard detection`, `forwarding`, `cache hierarchy`, `fetch/decode/execute`, `instruction set architecture`, `bus arbitration`, `memory consistency`, and `commit/retire`
+- 描述信号和时序时，优先使用数字电路术语，例如 `rising edge`、`falling edge`、`handshake`、`backpressure`、`stall`、`flush`、`valid`、`ready`
+- 描述整体设计和行为时，优先使用计算机体系结构术语，例如 `pipeline stage`、`hazard detection`、`forwarding`、`cache hierarchy`、`fetch/decode/execute`、`instruction set architecture`、`bus arbitration`、`memory consistency`、`commit/retire`
 
-Avoid spending much space on:
+尽量不要把篇幅花在下面这些内容上：
 
-- artifact inventories
-- file path dumps
-- long exact-signal listings
-- raw per-cycle value transitions
-- long generated SystemVerilog excerpts
-- preprocessing mechanics
-- schema details
+- artifact 清单
+- 大段文件路径
+- 很长的精确信号列表
+- 逐周期原始数值变化
+- 很长的 generated SystemVerilog 片段
+- 预处理实现细节
+- schema 说明
 
-unless the user explicitly asks for those details.
+除非用户明确要求这些细节。
 
-Wording discipline:
+建议使用的措辞：
 
-- use `exact RTL match` for authority-backed results
-- use `waveform-only analysis` when no authority database exists
-- use `rough Chisel candidate` for approximate source recovery
-- use `unresolved` when the artifact cannot prove the match
+- `exact RTL match`
+- `waveform-only analysis`
+- `rough Chisel candidate`
+- `unresolved`
 
-## Notes On Performance
+## 性能说明
 
-- VCD ingestion is the expensive one-time cost.
-- Later queries become much cheaper because they operate on window shards and metadata indexes.
-- Large artifacts can still produce multi-GB outputs, especially for large waveforms.
+- 最贵的是第一次 VCD ingestion。
+- 后续查询会便宜很多，因为主要依赖窗口分片和索引。
+- 对于非常大的波形，输出 artifact 也可能达到多 GB。
 
-## Minimal Example
+## 最小使用示例
 
 ```bash
 cd hardware-debug-waveform
@@ -664,9 +647,9 @@ python scripts/hw_debug_cli.py query-packet \
   --out /tmp/hw_packet.json
 ```
 
-## Limitations
+## 当前限制
 
-- Exact Chisel ownership is not proven by this skill.
-- Exact mapping stops at emitted RTL unless another artifact proves more.
-- Rough Chisel mapping is heuristic and must be labeled clearly.
-- Waveform-only mode still works, but exact RTL ownership will be unavailable.
+- 这个 skill 不能证明 exact Chisel ownership。
+- 精确映射目前只到 emitted RTL 为止。
+- rough Chisel mapping 本质上是启发式结果，必须明确标注。
+- waveform-only 模式可以工作，但不会有 exact RTL ownership。

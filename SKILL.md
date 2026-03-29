@@ -36,6 +36,7 @@ Recommended prompt:
 
 ## Workflow
 
+
 All commands run from the skill root directory. Use `cd` once at the start:
 
 ```bash
@@ -128,7 +129,7 @@ Write the answer in three parts:
 
 **Summary** (2–4 sentences)
 
-**One short artifact-status line** (e.g. `exact RTL mode` or `waveform-only mode`)
+**One short artifact-status line** (e.g. `exact RTL mode` or `waveform-only mode`, artifact file used ...)
 
 **Detailed Analysis**: expand the analysis upon the summary
 
@@ -142,4 +143,4 @@ Avoid: raw per-cycle value dumps, long exact-signal lists, artifact path invento
 
 ## Reference
 
-For command flags, artifact layout, and schema details, see `README.md` (English) or `README_cn.md` (Chinese).
+For command flags, artifact layout, and schema details, see `README_en.md` (English) or `README.md` (Chinese).
