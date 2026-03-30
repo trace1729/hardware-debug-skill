@@ -16,7 +16,8 @@ git clone https://github.com/trace1729/hardware-debug-skill.git
 
 ```
 codex
-$Hardware Debug Waveform
+$Hardware Debug Waveform xxx trigger assert, help me debug with xxx.vcd
+$Hardware Debug Waveform explain the module with xxx.vcd
 ```
 
 ### 输入

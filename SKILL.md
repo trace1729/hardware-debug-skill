@@ -18,16 +18,18 @@ Core approach:
 
 ## Workflow
 
-### Step0 - Ask for Input
+### Step0 - Resolve Input
 
-If the user has not already provided them, ask for:
+If the user has not already provided them, first try to discover them reliably from local context. Only ask the user when one or more required inputs cannot be found with high confidence.
+
+Required or useful inputs:
 
 - VCD path
 - Chisel source root
 - optional emitted RTL root (`build/rtl`)
 - optional focus scope (e.g. `TOP.SimTop.core.rob`) or debug hint
 
-Recommended prompt:
+Recommended prompt when discovery is insufficient:
 
 > Please provide the VCD path, the Chisel source root, and optionally the emitted RTL root (build/rtl), plus any focus scope or debug hint you want me to use.
 
@@ -130,24 +132,28 @@ Write the answer in two parts:
 
 **Summary** (2-4 sentences)
 
-- For a debug request:
+- For a debug request, include:
   - `Phenomenon`: one sentence describing the anomaly seen in the waveform
   - `Root Cause Category`: a standard hardware bug class such as state machine deadlock, data hazard, backpressure stall, or flush-handling miss
   - `Confidence`: state whether this is high confidence or low confidence
-- For an exploration request:
+- For an exploration request, include:
   - `Function`: what the module does
   - `Structure`: its main internal buffers, state, and submodules
-  - `Interconnect`: how it connects to nearby modules or pipeline stages
+  - `Interconnect`: how it connects to other modules
 
 **Detailed Analysis**
 
 - For a debug request:
-  - expand the `Root Cause Category` part of summary
-   1. find relevant waveform and Scala/Chisel logic to support the root cause assumption
-   2. give a fix recommendation if confidence is high
-   3. otherwise give the next best debugging steps
+  1. Expand the `Root Cause Category` from the summary.
+  2. Cite the most relevant waveform evidence and Scala/Chisel logic that support the hypothesis.
+  3. Give a fix recommendation if confidence is high.
+  4. Otherwise give the next best debugging steps.
 - For an exploration request:
-  -  find relevant waveform evidence and Scala/Chisel implementation to support your summary on `function`, `structure`, `interconnect` respectively.
+  1. Support `Function` by using the Scala/Chisel source to explain what the module does, and by using waveform evidence to analyze its key pipeline signals and timing behavior when sufficient evidence is available.
+  2. Support `Structure` with the main state, buffers, queues, or submodules.
+  3. Support `Interconnect` with the other modules, or interfaces that matter most.
+
+Offer WaveDrom only when a short timing diagram with a small number of significant signals would materially clarify the analysis. Do not ask by default.
 
 Use precise terms in the detailed analysis:
 
@@ -170,5 +176,9 @@ Include only the few source files or artifact paths that materially support the 
 
 For command flags, artifact layout, and schema details:
 
-- `README_en.md` (English)
-- `README.md` (legacy/default copy in this repo)
+- `README_en.md` (English reference)
+- `README.md` (Chinese reference)
+
+For wavedrom language:
+
+- `wavedrom.md`
