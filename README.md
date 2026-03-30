@@ -16,18 +16,22 @@
 格式说明：
 
 - 直接 `--waveform` 查询路径依赖 `wellen`，支持 `pywellen` 可读取的格式，包括 VCD 与 FST
-- `build-wave-db` 备用路径目前仍按 VCD 预处理设计，不应将其视为 FST 的有效路径
+- 直接 `--waveform` 查询会在 `artifacts/waveform_meta/` 下持久化波形元数据缓存，以加速后续查询
 
 ## 如何使用
 
 ### 安装
 
 ```bash
-pip install pywellen
 mkdir -p ~/.codex/skills/
 cd ~/.codex/skills
 git clone https://github.com/trace1729/hardware-debug-skill.git hardware-debug-waveform
 ```
+
+说明：
+
+- skill 会优先使用当前 Python 环境中的 `pywellen`
+- 若当前环境缺失 `pywellen`，会自动尝试使用 skill 内置的 `wellen/pywellen`
 
 ### 简单使用
 
@@ -35,6 +39,7 @@ git clone https://github.com/trace1729/hardware-debug-skill.git hardware-debug-w
 codex
 $Hardware Debug Waveform help me debug xxx.vcd/fst
 $Hardware Debug Waveform explain this module with xxx.vcd/fst
+$Hardware Debug Waveform avoid pywellen, explain this module with xxx.vcd
 ```
 
 必要输入：
@@ -49,6 +54,7 @@ $Hardware Debug Waveform explain this module with xxx.vcd/fst
 - `--suggestion`：人工调试提示
 - `--top`：RTL 顶层模块名，默认 `SimTop`
 - `--window-len`：时间窗长度，默认 `1000`
+- 选择不使用 pywellen, 使用 fallback 的方式处理vcd文件, 相对节省token，处理速度更快
 
 
 ## 基本流水线
@@ -60,7 +66,7 @@ $Hardware Debug Waveform explain this module with xxx.vcd/fst
 3. 优先使用 `query-packet --waveform` 或 `query-signal-value --waveform`，由 `wellen` 直接读取波形文件。
 4. 生成的 packet 只保留当前分析时间窗中真正相关的信号变化，并可附带 exact RTL ownership。
 5. LLM 再根据 `module_type`、`local_signal_name`、`focus_scope` 等线索回到 Scala/Chisel 源码中做根因分析。
-6. `build-wave-db` 仅在需要缓存、重复查询或显式保存规范化波形 artifact 时使用。
+6. 直接查询路径会复用 `artifacts/waveform_meta/` 下的元数据缓存；`build-wave-db` 仅在需要完整落盘 artifact 时使用。
 
 对 FST 而言，应只使用直接 `--waveform` 查询路径。
 
@@ -173,6 +179,7 @@ $Hardware Debug Waveform explain this module with xxx.vcd/fst
 ```text
 hardware-debug-waveform/artifacts/
 ├── authority/<fingerprint>/
+├── waveform_meta/<fingerprint>/
 ├── wave_db/<fingerprint>/
 └── packets/<fingerprint>/
 ```
@@ -180,6 +187,7 @@ hardware-debug-waveform/artifacts/
 说明如下：
 
 - `authority/`：`build-authority` 的缓存输出
+- `waveform_meta/`：直接 `--waveform` 查询路径的元数据缓存
 - `wave_db/`：`build-wave-db` 的缓存输出
 - `packets/`：CLI 推荐的 packet 默认输出位置
 

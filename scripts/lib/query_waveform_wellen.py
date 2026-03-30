@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 from typing import Any
@@ -10,7 +11,10 @@ from lib.build_debug_packet import (
     _window_numeric_id,
     build_debug_packet,
 )
-from lib.ingest_waveform_wellen import _collect_metadata, _load_pywellen, _normalize_value
+from lib.ingest_waveform_wellen import _build_scope_signal_index, _collect_metadata, _load_pywellen, _normalize_value
+
+
+ARTIFACTS_DIR = Path(__file__).resolve().parents[2] / "artifacts"
 
 
 def _scope_path_candidates(path: str) -> list[str]:
@@ -20,6 +24,101 @@ def _scope_path_candidates(path: str) -> list[str]:
     else:
         candidates.append(f"TOP.{path}")
     return list(dict.fromkeys(candidates))
+
+
+def _write_json(path: Path, obj: Any) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(obj, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
+def _load_json(path: Path) -> Any:
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _file_signature(path: Path) -> dict[str, Any]:
+    stat = path.stat()
+    return {
+        "path": str(path.resolve()),
+        "size": stat.st_size,
+        "mtime_ns": stat.st_mtime_ns,
+    }
+
+
+def _fingerprint(parts: dict[str, Any]) -> str:
+    payload = json.dumps(parts, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
+
+
+def _metadata_cache_root(metadata_cache_root: Path | None = None) -> Path:
+    return metadata_cache_root or (ARTIFACTS_DIR / "waveform_meta")
+
+
+def _metadata_cache_meta(*, wave_path: Path) -> dict[str, Any]:
+    return {
+        "kind": "waveform_meta",
+        "waveform": _file_signature(wave_path),
+    }
+
+
+def _metadata_cache_dir(*, wave_path: Path, metadata_cache_root: Path | None = None) -> Path:
+    root = _metadata_cache_root(metadata_cache_root)
+    return root / _fingerprint(_metadata_cache_meta(wave_path=wave_path))
+
+
+def _metadata_cache_paths(*, cache_dir: Path) -> dict[str, Path]:
+    return {
+        "signals": cache_dir / "signals.json",
+        "scopes": cache_dir / "scopes.json",
+        "scope_signal_index": cache_dir / "scope_signal_index.json",
+        "cache_meta": cache_dir / "cache_meta.json",
+    }
+
+
+def _metadata_cache_matches(cache_dir: Path, expected: dict[str, Any]) -> bool:
+    paths = _metadata_cache_paths(cache_dir=cache_dir)
+    if not paths["cache_meta"].exists():
+        return False
+    if any(not path.exists() for key, path in paths.items() if key != "cache_meta"):
+        return False
+    try:
+        existing = _load_json(paths["cache_meta"])
+    except json.JSONDecodeError:
+        return False
+    return existing == expected
+
+
+def _persist_metadata_cache(*, cache_dir: Path, cache_meta: dict[str, Any], signals: list[dict[str, Any]], scopes: list[dict[str, Any]]) -> None:
+    paths = _metadata_cache_paths(cache_dir=cache_dir)
+    _write_json(paths["signals"], signals)
+    _write_json(paths["scopes"], scopes)
+    _write_json(paths["scope_signal_index"], _build_scope_signal_index(signals, scopes))
+    _write_json(paths["cache_meta"], cache_meta)
+
+
+def _load_cached_metadata(cache_dir: Path) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    paths = _metadata_cache_paths(cache_dir=cache_dir)
+    return _load_json(paths["signals"]), _load_json(paths["scopes"])
+
+
+def _signal_lookup_from_rows(signals: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    return {signal["full_wave_path"]: signal for signal in signals}
+
+
+def _load_or_build_metadata(
+    *,
+    waveform: Any,
+    wave_path: Path,
+    metadata_cache_root: Path | None = None,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], dict[str, dict[str, Any]], Path]:
+    cache_meta = _metadata_cache_meta(wave_path=wave_path)
+    cache_dir = _metadata_cache_dir(wave_path=wave_path, metadata_cache_root=metadata_cache_root)
+    if _metadata_cache_matches(cache_dir, cache_meta):
+        signals, scopes = _load_cached_metadata(cache_dir)
+        return signals, scopes, _signal_lookup_from_rows(signals), cache_dir
+
+    signals, scopes, _signal_by_full_path = _collect_metadata(waveform)
+    _persist_metadata_cache(cache_dir=cache_dir, cache_meta=cache_meta, signals=signals, scopes=scopes)
+    return signals, scopes, _signal_lookup_from_rows(signals), cache_dir
 
 
 def _load_waveform(*, wave_path: str | Path, pywellen_module: Any | None = None) -> Any:
@@ -70,17 +169,23 @@ def query_signal_value_from_waveform(
     t: int,
     window_len: int = 1000,
     pywellen_module: Any | None = None,
+    metadata_cache_root: Path | None = None,
 ) -> dict[str, Any]:
     if t < 0:
         raise ValueError("time must be >= 0")
     if window_len < 1:
         raise ValueError("window_len must be >= 1")
 
+    wave_path = Path(wave_path)
     waveform = _load_waveform(wave_path=wave_path, pywellen_module=pywellen_module)
-    signals, _scopes, signal_by_full_path = _collect_metadata(waveform)
+    signals, _scopes, signal_by_full_path, _cache_dir = _load_or_build_metadata(
+        waveform=waveform,
+        wave_path=wave_path,
+        metadata_cache_root=metadata_cache_root,
+    )
     resolved_path, signal_info = _resolve_signal_metadata(signal_by_full_path=signal_by_full_path, full_wave_path=full_wave_path)
     signal_row = next(signal for signal in signals if signal["signal_id"] == signal_info["signal_id"])
-    sig = waveform.get_signal(signal_info["var"])
+    sig = waveform.get_signal_from_path(resolved_path)
 
     latest_change = None
     for change_t, value in sig.all_changes():
@@ -129,12 +234,18 @@ def build_debug_packet_from_waveform(
     authority_rows: list[dict[str, Any]] | None = None,
     authority_db: str | Path | None = None,
     pywellen_module: Any | None = None,
+    metadata_cache_root: Path | None = None,
 ) -> dict[str, Any]:
     if window_len < 1:
         raise ValueError("window_len must be >= 1")
 
+    wave_path = Path(wave_path)
     waveform = _load_waveform(wave_path=wave_path, pywellen_module=pywellen_module)
-    signals, _scopes, signal_by_full_path = _collect_metadata(waveform)
+    signals, _scopes, signal_by_full_path, _cache_dir = _load_or_build_metadata(
+        waveform=waveform,
+        wave_path=wave_path,
+        metadata_cache_root=metadata_cache_root,
+    )
 
     focus_signal_ids = _resolve_focus_signal_ids(signals=signals, focus_scope=focus_scope)
     if focus_signal_ids is None:
@@ -150,9 +261,10 @@ def build_debug_packet_from_waveform(
     active_signal_ids: set[str] = set()
     touched_focus_paths: set[str] = set()
 
-    for signal in signals:
+    iter_signals = focus_signals if focus_signal_ids is not None else signals
+    for signal in iter_signals:
         signal_info = signal_by_full_path[signal["full_wave_path"]]
-        sig = waveform.get_signal(signal_info["var"])
+        sig = waveform.get_signal_from_path(signal["full_wave_path"])
         for change_t, value in sig.all_changes():
             if change_t < t_start:
                 continue

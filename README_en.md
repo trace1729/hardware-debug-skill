@@ -16,6 +16,7 @@ The recommended path now uses `wellen` for direct waveform queries:
 Format note:
 
 - direct `--waveform` queries use `wellen` and support formats readable by `pywellen`, including VCD and FST
+- direct `--waveform` queries persist reusable waveform metadata cache under `artifacts/waveform_meta/`
 - the spare `build-wave-db` path is still VCD-oriented and should not be treated as a valid FST path
 
 ## How To Use
@@ -28,12 +29,18 @@ cd ~/.codex/skills
 git clone https://github.com/trace1729/hardware-debug-skill.git hardware-debug-waveform
 ```
 
+Notes:
+
+- the skill first uses `pywellen` from the active Python environment when available
+- if `pywellen` is missing, it tries the bundled local copy under `wellen/pywellen`
+
 ### Simple Usage
 
 ```text
 codex
 $Hardware Debug Waveform help me debug xxx.vcd
 $Hardware Debug Waveform explain this module with xxx.vcd
+$Hardware Debug Waveform avoid pywellen, explain this module with xxx.vcd
 ```
 
 Required inputs:
@@ -48,6 +55,8 @@ Common optional inputs:
 - `--suggestion`: human debug hint
 - `--top`: RTL top module name, default `SimTop`
 - `--window-len`: time-window length, default `1000`
+- explicitly specify avoiding pywellen for vcd parsing to save token and improve speed
+
 ## Basic Pipeline
 
 ### How the LLM uses the artifacts under the hood
@@ -57,7 +66,7 @@ Common optional inputs:
 3. The preferred path uses `query-packet --waveform` or `query-signal-value --waveform`, which reads the waveform directly through `wellen`.
 4. The generated packet keeps only the relevant changes for the selected window and can attach exact RTL ownership.
 5. The LLM then uses `module_type`, `local_signal_name`, and `focus_scope` to locate the relevant Scala/Chisel source.
-6. `build-wave-db` is only used when cached, materialized waveform artifacts are more useful than direct on-demand querying.
+6. The direct query path reuses metadata cached under `artifacts/waveform_meta/`; `build-wave-db` is only used when fully materialized waveform artifacts are more useful.
 
 For FST input, only the direct `--waveform` path should be used.
 
@@ -170,6 +179,7 @@ Default outputs are stored under:
 ```text
 hardware-debug-waveform/artifacts/
 ├── authority/<fingerprint>/
+├── waveform_meta/<fingerprint>/
 ├── wave_db/<fingerprint>/
 └── packets/<fingerprint>/
 ```
@@ -177,6 +187,7 @@ hardware-debug-waveform/artifacts/
 Meaning:
 
 - `authority/`: cache output from `build-authority`
+- `waveform_meta/`: metadata cache used by direct `--waveform` queries
 - `wave_db/`: cache output from `build-wave-db`
 - `packets/`: default packet output location suggested by the CLI
 

@@ -1,19 +1,46 @@
 from __future__ import annotations
 
+import importlib
 import json
 from pathlib import Path
 import sqlite3
+import sys
 from typing import IO, Any
 
 
-def _load_pywellen():
+def _bundled_pywellen_root() -> Path:
+    return Path(__file__).resolve().parents[2] / "wellen" / "pywellen"
+
+
+def _import_pywellen() -> Any | None:
     try:
-        import pywellen  # type: ignore
-    except ImportError as exc:
-        raise RuntimeError(
-            "pywellen is not available. Build or install it from wellen/pywellen before running this helper."
-        ) from exc
-    return pywellen
+        return importlib.import_module("pywellen")
+    except ImportError:
+        return None
+
+
+def _import_pywellen_from_bundled_root() -> Any | None:
+    bundled_root = _bundled_pywellen_root()
+    if not bundled_root.exists():
+        return None
+    if str(bundled_root) not in sys.path:
+        sys.path.insert(0, str(bundled_root))
+    return _import_pywellen()
+
+
+def _load_pywellen():
+    pywellen = _import_pywellen()
+    if pywellen is not None:
+        return pywellen
+
+    pywellen = _import_pywellen_from_bundled_root()
+    if pywellen is not None:
+        return pywellen
+
+    raise RuntimeError(
+        "pywellen is not available. The skill tried the active Python environment and the bundled local "
+        "copy under wellen/pywellen but could not load it."
+    )
 
 
 def _write_json(path: Path, obj: Any) -> None:

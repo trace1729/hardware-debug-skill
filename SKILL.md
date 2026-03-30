@@ -1,13 +1,13 @@
 ---
 name: hardware-debug-waveform
-description: Use when analyzing a hardware failure from a waveform file, a XiangShan-style Chisel source tree, and optionally emitted RTL. Handles direct waveform querying, waveform-to-RTL ownership lookup, cache-aware artifact planning, and rough RTL-to-Chisel recovery.
+description: Use when debugging or explaining hardware behavior from a waveform together with a XiangShan-style Scala/Chisel source tree and optional emitted RTL.
 ---
 
 # Hardware Debug Waveform
 
 ## Overview
 
-Use this skill to debug hardware failures from large waveforms with a Scala/Chisel source tree and, when available, emitted RTL.
+Use this skill to debug or explain behavior from large waveform files (VCD or FST) together with a Scala/Chisel source tree and, when available, emitted RTL.
 
 Core approach:
 
@@ -17,9 +17,10 @@ Core approach:
 - use generated SystemVerilog only as a fallback
 - use waveform DB preprocessing only as a spare path when cached artifacts are preferable
 
+
 ## Workflow
 
-### Step0 - Resolve Input
+### Step 0 - Resolve inputs
 
 If the user has not already provided them, first try to discover them reliably from local context. Only ask the user when one or more required inputs cannot be found with high confidence.
 
@@ -29,10 +30,11 @@ Required or useful inputs:
 - Chisel source root
 - optional emitted RTL root (`build/rtl`)
 - optional focus scope (e.g. `TOP.SimTop.core.rob`) or debug hint
+- optional preference for direct `wellen` queries or the legacy VCD-parser 
 
 Recommended prompt when discovery is insufficient:
 
-> Please provide the waveform path, the Chisel source root, and optionally the emitted RTL root (build/rtl), plus any focus scope or debug hint you want me to use.
+> Please provide the waveform path, the Chisel source root, and optionally the emitted RTL root (build/rtl), plus any focus scope, debug hint, or preference for direct `wellen` queries versus the legacy VCD-parser.
 
 
 All commands run from the skill root directory. Use `cd` once at the start:
@@ -46,7 +48,7 @@ cd ~/.codex/skills/hardware-debug-waveform
 ```bash
 python scripts/hw_debug_cli.py inspect-inputs \
   --scala-root /path/to/src/main/scala/xiangshan \
-  --waveform /path/to/run.vcd \
+  --waveform /path/to/run.vcd_or_run.fst \
   [--rtl-root /path/to/build/rtl] \
   [--focus-scope TOP.SimTop.core.rob] \
   [--suggestion "hang near rob tail"] \
@@ -55,8 +57,6 @@ python scripts/hw_debug_cli.py inspect-inputs \
 ```
 
 `inspect-inputs` validates paths, reports artifact sizes, checks cache status, and **prints the exact commands to run next**. Use those printed commands as the next steps.
-
-`--waveform` is the primary flag. The legacy `--vcd` alias is still accepted for compatibility.
 
 If it warns that artifacts are large, tell the user before proceeding.
 
@@ -75,7 +75,7 @@ Reuses cache automatically. Add `--force` to rebuild.
 
 ```bash
 python scripts/hw_debug_cli.py query-packet \
-  --waveform /path/to/run.vcd \
+  --waveform /path/to/run.vcd_or_run.fst \
   --window-id w42 \
   --window-len 1000 \
   --out <packet-out>/packet_w42.json \
@@ -89,7 +89,7 @@ Use the window ID that covers the suspected failure. Let `inspect-inputs` sugges
 
 ```bash
 python scripts/hw_debug_cli.py query-signal-value \
-  --waveform /path/to/run.vcd \
+  --waveform /path/to/run.vcd_or_run.fst \
   --signal TOP.SimTop.core.rob.commit_valid \
   --time 123456 \
   [--window-len 1000]
@@ -99,34 +99,14 @@ Use this when you need the value of one specific signal at one specific simulati
 
 ### Step 4 — (Spare path) Build waveform DB
 
-```bash
-python scripts/hw_debug_cli.py build-wave-db \
-  --waveform /path/to/run.vcd \
-  --window-len 1000 \
-  [--out-dir <wave-out>]
-```
+The spare wave-DB path is the legacy VCD-parser flow. Use it only when:
 
-Only use this when you want persisted waveform artifacts, repeated offline queries, or explicit cache reuse. Reuses cache automatically. Add `--force` to rebuild.
+- the user explicitly asks for the legacy VCD parser
+- the user explicitly asks to avoid `wellen`
+- the user wants persisted waveform artifacts
+- repeated cached VCD queries are more valuable than direct querying
 
-This spare path is currently intended for VCD input. Do not rely on it for FST.
-
-### Step 4b — (Spare path) Query from the built waveform DB
-
-```bash
-python scripts/hw_debug_cli.py query-packet \
-  --manifest <wave-out>/manifest.json \
-  --window-id w42 \
-  --out <packet-out>/packet_w42.json \
-  [--authority <authority-out>/rtl_authority.sqlite3] \
-  [--focus-scope TOP.SimTop.core.rob]
-```
-
-```bash
-python scripts/hw_debug_cli.py query-signal-value \
-  --manifest <wave-out>/manifest.json \
-  --signal TOP.SimTop.core.rob.commit_valid \
-  --time 123456
-```
+If you choose this branch, open `wave-db.md` and follow its commands and notes.
 
 ### Step 5 — (Optional) Add rough Chisel candidates
 
@@ -191,8 +171,8 @@ Include only the few source files or artifact paths that materially support the 
 ## Rules
 
 - Let `inspect-inputs` choose default artifact paths; only override when the user asks.
-- Prefer direct `--waveform` query commands over `build-wave-db` unless the user explicitly wants persisted waveform artifacts or repeated cached queries.
-- Treat direct `--waveform` queries as the only supported path for FST.
+- If direct `wellen` query fails on a VCD input, fall back to the legacy `build-wave-db -> query --manifest` flow and open `wave-db.md`.
+- If direct `wellen` query fails on an FST input, abort and inform the user.
 - Reuse cached artifacts; rebuild only when needed or explicitly requested.
 - Treat `rtl_authority.sqlite3` matches as exact RTL ownership.
 - If no `build/rtl` is provided, label the result `waveform-only analysis`.
@@ -205,6 +185,7 @@ For command flags, artifact layout, and schema details:
 
 - `README_en.md` (English reference)
 - `README.md` (Chinese reference)
+- `wave-db.md` (legacy wave-DB / VCD-parser reference)
 
 For wavedrom language:
 
