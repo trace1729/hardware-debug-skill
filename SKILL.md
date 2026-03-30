@@ -158,8 +158,6 @@ Write the answer in two parts:
   2. Support `Structure` with the main state, buffers, queues, or submodules.
   3. Support `Interconnect` with the other modules, or interfaces that matter most.
 
-Offer WaveDrom only when a short timing diagram with a small number of significant signals would materially clarify the analysis. Do not ask by default.
-
 Use precise terms in the detailed analysis:
 
 - signals/timing: `rising edge`, `falling edge`, `valid`, `ready`, `handshake`, `backpressure`, `stall`, `flush`, `state transition`
