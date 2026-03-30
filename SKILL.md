@@ -1,20 +1,21 @@
 ---
 name: hardware-debug-waveform
-description: Use when analyzing a hardware failure from a VCD waveform, a XiangShan-style Chisel source tree, and optionally emitted RTL. Handles waveform-to-RTL ownership lookup, cache-aware artifact planning, and rough RTL-to-Chisel recovery.
+description: Use when analyzing a hardware failure from a waveform file, a XiangShan-style Chisel source tree, and optionally emitted RTL. Handles direct waveform querying, waveform-to-RTL ownership lookup, cache-aware artifact planning, and rough RTL-to-Chisel recovery.
 ---
 
 # Hardware Debug Waveform
 
 ## Overview
 
-Use this skill to debug hardware failures from large VCD waveforms with a Scala/Chisel source tree and, when available, emitted RTL.
+Use this skill to debug hardware failures from large waveforms with a Scala/Chisel source tree and, when available, emitted RTL.
 
 Core approach:
 
-- use the waveform to identify the failure pattern
+- use direct waveform queries as the default evidence path
 - use emitted RTL to recover exact ownership and hierarchy
 - use Scala/Chisel source as the primary material for root-cause analysis
 - use generated SystemVerilog only as a fallback
+- use waveform DB preprocessing only as a spare path when cached artifacts are preferable
 
 ## Workflow
 
@@ -24,14 +25,14 @@ If the user has not already provided them, first try to discover them reliably f
 
 Required or useful inputs:
 
-- VCD path
+- waveform path
 - Chisel source root
 - optional emitted RTL root (`build/rtl`)
 - optional focus scope (e.g. `TOP.SimTop.core.rob`) or debug hint
 
 Recommended prompt when discovery is insufficient:
 
-> Please provide the VCD path, the Chisel source root, and optionally the emitted RTL root (build/rtl), plus any focus scope or debug hint you want me to use.
+> Please provide the waveform path, the Chisel source root, and optionally the emitted RTL root (build/rtl), plus any focus scope or debug hint you want me to use.
 
 
 All commands run from the skill root directory. Use `cd` once at the start:
@@ -68,7 +69,33 @@ python scripts/hw_debug_cli.py build-authority \
 
 Reuses cache automatically. Add `--force` to rebuild.
 
-### Step 3 — Build waveform DB
+### Step 3 — Query a debug packet directly from the waveform
+
+```bash
+python scripts/hw_debug_cli.py query-packet \
+  --waveform /path/to/run.vcd \
+  --window-id w42 \
+  --window-len 1000 \
+  --out <packet-out>/packet_w42.json \
+  [--authority <authority-out>/rtl_authority.sqlite3] \
+  [--focus-scope TOP.SimTop.core.rob]
+```
+
+Use the window ID that covers the suspected failure. Let `inspect-inputs` suggest the exact command form.
+
+### Step 3b — (Optional) Query one signal value at one time directly from the waveform
+
+```bash
+python scripts/hw_debug_cli.py query-signal-value \
+  --waveform /path/to/run.vcd \
+  --signal TOP.SimTop.core.rob.commit_valid \
+  --time 123456 \
+  [--window-len 1000]
+```
+
+Use this when you need the value of one specific signal at one specific simulation time.
+
+### Step 4 — (Spare path) Build waveform DB
 
 ```bash
 python scripts/hw_debug_cli.py build-wave-db \
@@ -77,9 +104,9 @@ python scripts/hw_debug_cli.py build-wave-db \
   [--out-dir <wave-out>]
 ```
 
-Reuses cache automatically. Add `--force` to rebuild.
+Only use this when you want persisted waveform artifacts, repeated offline queries, or explicit cache reuse. Reuses cache automatically. Add `--force` to rebuild.
 
-### Step 4 — Query a debug packet
+### Step 4b — (Spare path) Query from the built waveform DB
 
 ```bash
 python scripts/hw_debug_cli.py query-packet \
@@ -90,18 +117,12 @@ python scripts/hw_debug_cli.py query-packet \
   [--focus-scope TOP.SimTop.core.rob]
 ```
 
-Use the window ID that covers the suspected failure. Check `windows.json` to find active windows if unsure.
-
-### Step 4b — (Optional) Query one signal value at one time
-
 ```bash
 python scripts/hw_debug_cli.py query-signal-value \
   --manifest <wave-out>/manifest.json \
   --signal TOP.SimTop.core.rob.commit_valid \
   --time 123456
 ```
-
-Use this when you need the value of one specific signal at one specific simulation time.
 
 ### Step 5 — (Optional) Add rough Chisel candidates
 
@@ -123,7 +144,7 @@ Only run this step if a rough mapping artifact is available. Treat results as gu
 5. Present rough Chisel candidates from step 5 only as secondary, lower-confidence hints.
 6. Only inspect generated SystemVerilog if Scala cannot explain the behavior.
 
-If you need a point lookup instead of a window summary, use `query-signal-value`.
+If you need a point lookup instead of a window summary, use `query-signal-value`. Prefer the direct waveform mode unless a persisted manifest already exists and is the better fit.
 
 
 ## Output
@@ -166,6 +187,7 @@ Include only the few source files or artifact paths that materially support the 
 ## Rules
 
 - Let `inspect-inputs` choose default artifact paths; only override when the user asks.
+- Prefer direct `--waveform` query commands over `build-wave-db` unless the user explicitly wants persisted waveform artifacts or repeated cached queries.
 - Reuse cached artifacts; rebuild only when needed or explicitly requested.
 - Treat `rtl_authority.sqlite3` matches as exact RTL ownership.
 - If no `build/rtl` is provided, label the result `waveform-only analysis`.

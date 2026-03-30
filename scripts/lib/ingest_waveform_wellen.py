@@ -1,75 +1,23 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Iterable
 from pathlib import Path
 import sqlite3
 from typing import IO, Any
 
-from lib.stream_vcd_reader import iter_vcd_changes
 
-
-def _parse_vcd_metadata(lines: Iterable[str]) -> tuple[list[dict[str, Any]], list[dict[str, Any]], dict[str, list[str]]]:
-    scopes: list[dict[str, Any]] = []
-    signals: list[dict[str, Any]] = []
-    id_to_signal: dict[str, list[str]] = {}
-    scope_stack: list[tuple[str, str]] = []
-    scope_counter = 0
-    signal_counter = 0
-    for raw in lines:
-        line = raw.strip()
-        if not line:
-            continue
-        if line == "$enddefinitions $end":
-            break
-        if line.startswith("$scope "):
-            parts = line.split()
-            scope_kind = parts[1]
-            scope_name = parts[2]
-            parent_scope_id = scope_stack[-1][0] if scope_stack else None
-            full_scope_path = ".".join([s[1] for s in scope_stack] + [scope_name])
-            scope_id = f"scope{scope_counter}"
-            scope_counter += 1
-            scopes.append(
-                {
-                    "scope_id": scope_id,
-                    "full_scope_path": full_scope_path,
-                    "parent_scope_id": parent_scope_id,
-                    "scope_kind": scope_kind,
-                    "local_name": scope_name,
-                }
-            )
-            scope_stack.append((scope_id, scope_name))
-            continue
-        if line.startswith("$upscope"):
-            if scope_stack:
-                scope_stack.pop()
-            continue
-        if line.startswith("$var "):
-            parts = line.split()
-            bit_width = int(parts[2])
-            id_code = parts[3]
-            local_name = parts[4]
-            scope_id = scope_stack[-1][0] if scope_stack else None
-            full_wave_path = ".".join([s[1] for s in scope_stack] + [local_name])
-            signal_id = f"sig{signal_counter}"
-            signal_counter += 1
-            signals.append(
-                {
-                    "signal_id": signal_id,
-                    "vcd_id_code": id_code,
-                    "scope_id": scope_id,
-                    "full_wave_path": full_wave_path,
-                    "local_name": local_name,
-                    "bit_width": bit_width,
-                    "value_kind": "scalar" if bit_width == 1 else "vector",
-                }
-            )
-            id_to_signal.setdefault(id_code, []).append(signal_id)
-    return signals, scopes, id_to_signal
+def _load_pywellen():
+    try:
+        import pywellen  # type: ignore
+    except ImportError as exc:
+        raise RuntimeError(
+            "pywellen is not available. Build or install it from wellen/pywellen before running this helper."
+        ) from exc
+    return pywellen
 
 
 def _write_json(path: Path, obj: Any) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(obj, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
@@ -130,63 +78,148 @@ def _write_signal_metadata_sqlite(path: Path, signals: list[dict[str, Any]], sco
         conn.close()
 
 
-def stream_waveform_store(*, vcd_path: Path, out_dir: Path, window_len: int, version: str = "0.1") -> Path:
+def _normalize_format(file_format: str) -> str:
+    return file_format.lower()
+
+
+def _normalize_value(value: Any, bit_width: int | None) -> str:
+    if isinstance(value, int):
+        if bit_width is None or bit_width <= 1:
+            return str(value)
+        return format(value, f"0{bit_width}b")
+    return str(value)
+
+
+def _collect_metadata(waveform: Any) -> tuple[list[dict[str, Any]], list[dict[str, Any]], dict[str, Any]]:
+    hierarchy = waveform.hierarchy
+    scopes: list[dict[str, Any]] = []
+    signals: list[dict[str, Any]] = []
+    signal_by_full_path: dict[str, Any] = {}
+    scope_counter = 0
+    signal_counter = 0
+
+    def visit_scope(scope: Any, parent_scope_id: str | None) -> None:
+        nonlocal scope_counter, signal_counter
+        scope_id = f"scope{scope_counter}"
+        scope_counter += 1
+        full_scope_path = scope.full_name(hierarchy)
+        scopes.append(
+            {
+                "scope_id": scope_id,
+                "full_scope_path": full_scope_path,
+                "parent_scope_id": parent_scope_id,
+                "scope_kind": scope.scope_type(),
+                "local_name": scope.name(hierarchy),
+            }
+        )
+
+        for var in scope.vars(hierarchy):
+            full_wave_path = var.full_name(hierarchy)
+            bit_width = var.bitwidth() or 0
+            signal_id = f"sig{signal_counter}"
+            signal_counter += 1
+            signal = {
+                "signal_id": signal_id,
+                "scope_id": scope_id,
+                "full_wave_path": full_wave_path,
+                "local_name": var.name(hierarchy),
+                "bit_width": bit_width,
+                "value_kind": "scalar" if bit_width == 1 else "vector",
+            }
+            signals.append(signal)
+            signal_by_full_path[full_wave_path] = {
+                "signal_id": signal_id,
+                "var": var,
+                "bit_width": bit_width,
+            }
+
+        for child in scope.scopes(hierarchy):
+            visit_scope(child, scope_id)
+
+    for top_scope in hierarchy.top_scopes():
+        visit_scope(top_scope, None)
+
+    return signals, scopes, signal_by_full_path
+
+
+def stream_waveform_store_wellen(
+    *,
+    wave_path: Path,
+    out_dir: Path,
+    window_len: int,
+    version: str = "0.1",
+    pywellen_module: Any | None = None,
+) -> Path:
     if window_len < 1:
         raise ValueError("window_len must be >= 1")
+
+    pywellen = pywellen_module or _load_pywellen()
+    waveform = pywellen.Waveform(path=str(wave_path))
+
     out_dir.mkdir(parents=True, exist_ok=True)
-    with vcd_path.open("r", encoding="utf-8", errors="ignore") as f:
-        signals, scopes, id_to_signal = _parse_vcd_metadata(f)
+    signals, scopes, signal_by_full_path = _collect_metadata(waveform)
     _write_json(out_dir / "signals.json", signals)
     _write_json(out_dir / "scopes.json", scopes)
     _write_json(out_dir / "scope_signal_index.json", _build_scope_signal_index(signals, scopes))
     _write_signal_metadata_sqlite(out_dir / "signal_metadata.sqlite3", signals, scopes)
+
     by_window_dir = out_dir / "changes" / "by_window"
     by_window_dir.mkdir(parents=True, exist_ok=True)
 
-    watched_ids = set(id_to_signal.keys())
     signal_window_map: dict[tuple[str, str], dict[str, Any]] = {}
     window_map: dict[str, dict[str, Any]] = {}
     window_file_map: dict[str, IO[str]] = {}
     change_count = 0
+
     try:
-        with vcd_path.open("r", encoding="utf-8", errors="ignore") as f:
-            for t, id_code, value in iter_vcd_changes(f, watched_ids=watched_ids):
-                signal_ids = id_to_signal[id_code]
+        for signal in signals:
+            full_wave_path = signal["full_wave_path"]
+            signal_info = signal_by_full_path[full_wave_path]
+            sig = waveform.get_signal(signal_info["var"])
+            for t, value in sig.all_changes():
+                normalized_value = _normalize_value(value, signal_info["bit_width"])
+                signal_id = signal_info["signal_id"]
                 window_idx = t // window_len
                 window_id = f"w{window_idx}"
+                change = {
+                    "t": t,
+                    "signal_id": signal_id,
+                    "window_id": window_id,
+                    "value": normalized_value,
+                }
                 window_file = window_file_map.get(window_id)
                 if window_file is None:
                     window_file = (by_window_dir / f"{window_id}.jsonl").open("w", encoding="utf-8")
                     window_file_map[window_id] = window_file
+                window_file.write(json.dumps(change, sort_keys=True) + "\n")
+                change_count += 1
+
                 win = window_map.get(window_id)
                 if win is None:
-                    win = {
+                    window_map[window_id] = {
                         "id": window_id,
                         "t_start": window_idx * window_len,
                         "t_end": ((window_idx + 1) * window_len) - 1,
-                        "change_count": 0,
-                        "active_signal_ids": set(),
+                        "change_count": 1,
+                        "active_signal_ids": {signal_id},
                     }
-                    window_map[window_id] = win
-                for signal_id in signal_ids:
-                    change = {"t": t, "signal_id": signal_id, "window_id": window_id, "value": value}
-                    window_file.write(json.dumps(change, sort_keys=True) + "\n")
-                    change_count += 1
+                else:
                     win["change_count"] += 1
                     win["active_signal_ids"].add(signal_id)
-                    key = (signal_id, window_id)
-                    row = signal_window_map.get(key)
-                    if row is None:
-                        signal_window_map[key] = {
-                            "signal_id": signal_id,
-                            "window_id": window_id,
-                            "first_t": t,
-                            "last_t": t,
-                            "change_count": 1,
-                        }
-                    else:
-                        row["last_t"] = t
-                        row["change_count"] += 1
+
+                key = (signal_id, window_id)
+                row = signal_window_map.get(key)
+                if row is None:
+                    signal_window_map[key] = {
+                        "signal_id": signal_id,
+                        "window_id": window_id,
+                        "first_t": t,
+                        "last_t": t,
+                        "change_count": 1,
+                    }
+                else:
+                    row["last_t"] = t
+                    row["change_count"] += 1
     finally:
         for window_file in window_file_map.values():
             window_file.close()
@@ -203,17 +236,26 @@ def stream_waveform_store(*, vcd_path: Path, out_dir: Path, window_len: int, ver
                 "active_signal_count": len(win["active_signal_ids"]),
             }
         )
+
     signal_window_index = sorted(signal_window_map.values(), key=lambda row: (row["signal_id"], row["window_id"]))
     _write_json(out_dir / "windows.json", windows)
     _write_json(out_dir / "signal_window_index.json", signal_window_index)
     window_index = [
-        {"window_id": window["id"], "path": str(by_window_dir / f"{window['id']}.jsonl"), "change_count": window["change_count"]}
+        {
+            "window_id": window["id"],
+            "path": str(by_window_dir / f"{window['id']}.jsonl"),
+            "change_count": window["change_count"],
+        }
         for window in windows
     ]
     _write_json(out_dir / "window_index.json", window_index)
+
     manifest = {
         "version": version,
-        "waveform": {"path": str(vcd_path), "format": "vcd"},
+        "waveform": {
+            "path": str(wave_path),
+            "format": _normalize_format(waveform.hierarchy.file_format()),
+        },
         "summary": {
             "signal_count": len(signals),
             "scope_count": len(scopes),

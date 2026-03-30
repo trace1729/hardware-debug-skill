@@ -18,6 +18,11 @@ if str(SCRIPT_DIR) not in sys.path:
 from lib.build_debug_packet import build_debug_packet_from_manifest, query_signal_value_from_manifest
 from lib.build_rtl_authority import build_rtl_authority
 from lib.ingest_waveform import stream_waveform_store
+from lib.query_waveform_wellen import (
+    build_debug_packet_from_waveform,
+    load_authority_object,
+    query_signal_value_from_waveform,
+)
 
 
 WARN_VCD_BYTES = 1 * 1024 * 1024 * 1024
@@ -226,6 +231,15 @@ def _cmd_inspect_inputs(args: argparse.Namespace) -> int:
         print(f"{_self_cmd()} build-authority --rtl-root {args.rtl_root} --top {args.top} --out-dir {authority_out}")
     else:
         print("waveform-only analysis mode: exact RTL authority build is skipped")
+    packet_cmd = f"{_self_cmd()} query-packet --waveform {args.vcd} --window-id <wN> --window-len {args.window_len} --out {packet_out}"
+    signal_cmd = f"{_self_cmd()} query-signal-value --waveform {args.vcd} --signal <full-wave-path> --time <t> --window-len {args.window_len}"
+    if args.rtl_root is not None:
+        packet_cmd += f" --authority {authority_out / 'rtl_authority.sqlite3'}"
+    if args.focus_scope:
+        packet_cmd += f" --focus-scope {args.focus_scope}"
+    print(packet_cmd)
+    print(signal_cmd)
+    print("spare path:")
     print(f"{_self_cmd()} build-wave-db --vcd {args.vcd} --out-dir {wave_out} --window-len {args.window_len}")
     packet_cmd = f"{_self_cmd()} query-packet --manifest {wave_out / 'manifest.json'} --window-id <wN> --out {packet_out}"
     if args.rtl_root is not None:
@@ -276,28 +290,54 @@ def _cmd_build_wave_db(args: argparse.Namespace) -> int:
 
 
 def _cmd_query_packet(args: argparse.Namespace) -> int:
-    manifest = json.loads(args.manifest.read_text(encoding="utf-8"))
-    if args.authority is None:
-        packet = build_debug_packet_from_manifest(
-            manifest=manifest,
-            window_id=args.window_id,
-            focus_scope=args.focus_scope,
-        )
-    elif args.authority.suffix == ".sqlite3":
-        packet = build_debug_packet_from_manifest(
-            manifest=manifest,
-            authority_db=args.authority,
-            window_id=args.window_id,
-            focus_scope=args.focus_scope,
-        )
+    if args.manifest is not None:
+        manifest = json.loads(args.manifest.read_text(encoding="utf-8"))
+        if args.authority is None:
+            packet = build_debug_packet_from_manifest(
+                manifest=manifest,
+                window_id=args.window_id,
+                focus_scope=args.focus_scope,
+            )
+        elif args.authority.suffix == ".sqlite3":
+            packet = build_debug_packet_from_manifest(
+                manifest=manifest,
+                authority_db=args.authority,
+                window_id=args.window_id,
+                focus_scope=args.focus_scope,
+            )
+        else:
+            authority = load_authority_object(args.authority)
+            packet = build_debug_packet_from_manifest(
+                manifest=manifest,
+                authority=authority,
+                window_id=args.window_id,
+                focus_scope=args.focus_scope,
+            )
     else:
-        authority = json.loads(args.authority.read_text(encoding="utf-8"))
-        packet = build_debug_packet_from_manifest(
-            manifest=manifest,
-            authority=authority,
-            window_id=args.window_id,
-            focus_scope=args.focus_scope,
-        )
+        if args.authority is None:
+            packet = build_debug_packet_from_waveform(
+                wave_path=args.waveform,
+                window_id=args.window_id,
+                window_len=args.window_len,
+                focus_scope=args.focus_scope,
+            )
+        elif args.authority.suffix == ".sqlite3":
+            packet = build_debug_packet_from_waveform(
+                wave_path=args.waveform,
+                authority_db=args.authority,
+                window_id=args.window_id,
+                window_len=args.window_len,
+                focus_scope=args.focus_scope,
+            )
+        else:
+            authority = load_authority_object(args.authority)
+            packet = build_debug_packet_from_waveform(
+                wave_path=args.waveform,
+                authority=authority,
+                window_id=args.window_id,
+                window_len=args.window_len,
+                focus_scope=args.focus_scope,
+            )
     args.out.parent.mkdir(parents=True, exist_ok=True)
     args.out.write_text(json.dumps(packet, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     return 0
@@ -348,12 +388,20 @@ def _cmd_rough_map_chisel(args: argparse.Namespace) -> int:
 
 
 def _cmd_query_signal_value(args: argparse.Namespace) -> int:
-    manifest = json.loads(args.manifest.read_text(encoding="utf-8"))
-    value_info = query_signal_value_from_manifest(
-        manifest=manifest,
-        full_wave_path=args.signal,
-        t=args.time,
-    )
+    if args.manifest is not None:
+        manifest = json.loads(args.manifest.read_text(encoding="utf-8"))
+        value_info = query_signal_value_from_manifest(
+            manifest=manifest,
+            full_wave_path=args.signal,
+            t=args.time,
+        )
+    else:
+        value_info = query_signal_value_from_waveform(
+            wave_path=args.waveform,
+            full_wave_path=args.signal,
+            t=args.time,
+            window_len=args.window_len,
+        )
     if args.out is None:
         print(json.dumps(value_info, indent=2, sort_keys=True))
     else:
@@ -394,9 +442,12 @@ def build_parser() -> argparse.ArgumentParser:
     wave_p.set_defaults(func=_cmd_build_wave_db)
 
     packet_p = sub.add_parser("query-packet")
-    packet_p.add_argument("--manifest", required=True, type=Path)
+    packet_source = packet_p.add_mutually_exclusive_group(required=True)
+    packet_source.add_argument("--manifest", type=Path)
+    packet_source.add_argument("--waveform", type=Path)
     packet_p.add_argument("--authority", type=Path)
     packet_p.add_argument("--window-id", required=True)
+    packet_p.add_argument("--window-len", type=int, default=1000)
     packet_p.add_argument("--focus-scope")
     packet_p.add_argument("--out", required=True, type=Path)
     packet_p.set_defaults(func=_cmd_query_packet)
@@ -408,9 +459,12 @@ def build_parser() -> argparse.ArgumentParser:
     rough_p.set_defaults(func=_cmd_rough_map_chisel)
 
     value_p = sub.add_parser("query-signal-value")
-    value_p.add_argument("--manifest", required=True, type=Path)
+    value_source = value_p.add_mutually_exclusive_group(required=True)
+    value_source.add_argument("--manifest", type=Path)
+    value_source.add_argument("--waveform", type=Path)
     value_p.add_argument("--signal", required=True)
     value_p.add_argument("--time", required=True, type=int)
+    value_p.add_argument("--window-len", type=int, default=1000)
     value_p.add_argument("--out", type=Path)
     value_p.set_defaults(func=_cmd_query_signal_value)
     return parser
