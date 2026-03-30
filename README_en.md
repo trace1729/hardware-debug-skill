@@ -24,8 +24,12 @@ cd ~/.claude/skills/
 ```
 
 ```bash
+
 pip install pywellen
 git clone https://github.com/trace1729/hardware-debug-skill.git hardware-debug-waveform
+cd hardware-debug-waveform
+# optionly
+    git checkout no-pywellen
 ```
 
 Notes:
