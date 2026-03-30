@@ -190,3 +190,7 @@ For command flags, artifact layout, and schema details:
 For wavedrom language:
 
 - `wavedrom.md`
+
+For artifact:
+
+- `artifact.md`

@@ -1,31 +1,30 @@
-# Hardware Debug Waveform Skill
+# Waveform Analysis Skill 
 
 ## Summary
 
 This skill provides a structured hardware-debug workflow that combines waveform evidence, emitted RTL, and Scala/Chisel source code for LLM-assisted analysis.
 
-The recommended path now uses `wellen` for direct waveform queries:
+The recommended path now uses `wellen` for direct waveform queries, fallback vcd parsing is still available, but it is now a spare path for caching, repeated queries, or workflows that need persisted waveform artifacts.
 
-- query one signal value at one simulation time directly from the waveform
-- extract one debug packet for a chosen window directly from the waveform
-- join exact RTL ownership when emitted RTL is available
-- use Scala/Chisel source as the primary material for root-cause analysis
 
-`build-wave-db` is still available, but it is now a spare path for caching, repeated queries, or workflows that need persisted waveform artifacts.
-
-Format note:
-
-- direct `--waveform` queries use `wellen` and support formats readable by `pywellen`, including VCD and FST
-- direct `--waveform` queries persist reusable waveform metadata cache under `artifacts/waveform_meta/`
-- the spare `build-wave-db` path is still VCD-oriented and should not be treated as a valid FST path
 
 ## How To Use
 
 ### Install
 
 ```bash
+# codex
 mkdir -p ~/.codex/skills/
 cd ~/.codex/skills
+
+```bash
+# or claude code
+mkdir -p ~/.claude/skills/
+cd ~/.claude/skills/
+```
+
+```bash
+pip install pywellen
 git clone https://github.com/trace1729/hardware-debug-skill.git hardware-debug-waveform
 ```
 
@@ -55,7 +54,7 @@ Common optional inputs:
 - `--suggestion`: human debug hint
 - `--top`: RTL top module name, default `SimTop`
 - `--window-len`: time-window length, default `1000`
-- explicitly specify avoiding pywellen for vcd parsing to save token and improve speed
+- `--avoid-pywellen` explicitly specify avoiding pywellen for vcd parsing to save token and improve speed
 
 ## Basic Pipeline
 
@@ -129,48 +128,7 @@ Adds rough Chisel candidates to a packet.
 
 ### Artifacts And Schema
 
-#### Main Artifacts
-
-`rtl_authority.sqlite3`
-
-Table: `authority_lookup`
-
-Key fields:
-- `full_signal_name`
-- `module_type`
-- `instance_path`
-- `local_signal_name`
-- `source_file`
-
-`manifest.json`
-
-Entry point for the spare waveform DB flow.
-
-Top-level fields:
-- `version`
-- `waveform`
-- `summary`
-- `tables`
-
-`packet.json`
-
-Output of one window query.
-
-Top-level fields:
-- `version`
-- `query`
-- `window_summary`
-- `focus_signals`
-- `notes`
-
-`query-signal-value` output
-
-Top-level fields:
-- `version`
-- `query`
-- `signal`
-- `window`
-- `value_at_time`
+- refer to `artifact.md`
 
 ### Artifacts Directory
 
@@ -195,10 +153,12 @@ Meaning:
 
 ### Limitation
 
-- The preferred path uses `wellen`, and the CLI still keeps the historical `--vcd` alias for compatibility.
-- Direct `--waveform` queries support VCD and FST.
-- `build-wave-db` is still a VCD-oriented preprocessing implementation, has not been replaced by a full `wellen` materialization flow, and should not be treated as FST support.
 - Direct `query-packet --waveform` is good for on-demand analysis; prebuilt wave DB artifacts may still be better for heavy repeated queries.
 - Direct `query-packet --waveform` may be slow on very large FST files.
 - Without `--rtl-root`, the workflow becomes waveform-only and cannot recover exact RTL ownership.
 - `rough-map-chisel` remains heuristic and must not be treated as exact source truth.
+
+## Contribution
+
+
+This project use [wellen](https://github.com/ekiwi/wellen) to parse vcd/fst waveform

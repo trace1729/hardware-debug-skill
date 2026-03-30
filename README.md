@@ -1,30 +1,27 @@
-# Hardware Debug Waveform Skill
+# Waveform Analysis Skill 
 
 ## 总结
 
-该 skill 面向硬件波形调试场景，结合波形(fst/vcd)、emitted RTL 与 Scala/Chisel 源码，为 LLM 提供结构化调试入口。
-
-优先使用 `wellen` 库处理波形
-
-- 直接从波形文件查询单个信号在指定时刻的值
-- 直接从波形文件抽取指定时间窗的 debug packet
-- 在提供 emitted RTL 时，补充精确的 RTL ownership
-- 以 Scala/Chisel 源码作为最终分析与定位的主要依据
-
-`build-wave-db` 仍然保留，但定位为备用路径，适合重复查询、离线缓存或需要显式构建 artifact 的场景。
-
-格式说明：
-
-- 直接 `--waveform` 查询路径依赖 `wellen`，支持 `pywellen` 可读取的格式，包括 VCD 与 FST
-- 直接 `--waveform` 查询会在 `artifacts/waveform_meta/` 下持久化波形元数据缓存，以加速后续查询
+使用 wellen 预处理波形文件，基于build/rtl 构建 chisel -> verilog 信号映射，从而让LLM更好的根据波形调试。
+> 优先使用 `wellen` 库处理波形, 也可以使用基于正则匹配的vcd解析器，这种方法会构建离线缓存，适合重复查询、离线缓存或需要显式构建产物的场景。
 
 ## 如何使用
 
 ### 安装
 
 ```bash
+# codex
 mkdir -p ~/.codex/skills/
 cd ~/.codex/skills
+
+```bash
+# or claude code
+mkdir -p ~/.claude/skills/
+cd ~/.claude/skills/
+```
+
+```bash
+pip install pywellen
 git clone https://github.com/trace1729/hardware-debug-skill.git hardware-debug-waveform
 ```
 
@@ -54,7 +51,7 @@ $Hardware Debug Waveform avoid pywellen, explain this module with xxx.vcd
 - `--suggestion`：人工调试提示
 - `--top`：RTL 顶层模块名，默认 `SimTop`
 - `--window-len`：时间窗长度，默认 `1000`
-- 选择不使用 pywellen, 使用 fallback 的方式处理vcd文件, 相对节省token，处理速度更快
+-  `--avoid pywellen`: 使用fallback 方式处理 vcd 文件，更节省 token
 
 
 ## 基本流水线
@@ -66,9 +63,8 @@ $Hardware Debug Waveform avoid pywellen, explain this module with xxx.vcd
 3. 优先使用 `query-packet --waveform` 或 `query-signal-value --waveform`，由 `wellen` 直接读取波形文件。
 4. 生成的 packet 只保留当前分析时间窗中真正相关的信号变化，并可附带 exact RTL ownership。
 5. LLM 再根据 `module_type`、`local_signal_name`、`focus_scope` 等线索回到 Scala/Chisel 源码中做根因分析。
-6. 直接查询路径会复用 `artifacts/waveform_meta/` 下的元数据缓存；`build-wave-db` 仅在需要完整落盘 artifact 时使用。
+6. 查询会复用 `artifacts/waveform_meta/` 下的元数据缓存；`build-wave-db` 仅在显示指定的情况下才可以使用。
 
-对 FST 而言，应只使用直接 `--waveform` 查询路径。
 
 ## 详细分析
 
@@ -129,48 +125,7 @@ $Hardware Debug Waveform avoid pywellen, explain this module with xxx.vcd
 
 ### 产物与 Schema
 
-#### 主要产物
-
-`rtl_authority.sqlite3`
-
-表：`authority_lookup`
-
-关键字段：
-- `full_signal_name`
-- `module_type`
-- `instance_path`
-- `local_signal_name`
-- `source_file`
-
-`manifest.json`
-
-备用波形数据库入口。
-
-顶层字段：
-- `version`
-- `waveform`
-- `summary`
-- `tables`
-
-`packet.json`
-
-单次时间窗查询产物。
-
-顶层字段：
-- `version`
-- `query`
-- `window_summary`
-- `focus_signals`
-- `notes`
-
-`query-signal-value` 输出
-
-顶层字段：
-- `version`
-- `query`
-- `signal`
-- `window`
-- `value_at_time`
+- 见 `artifact.md`
 
 ### Artifacts 目录
 
@@ -195,10 +150,11 @@ hardware-debug-waveform/artifacts/
 
 ### 限制
 
-- 当前推荐路径虽然依赖 `wellen`，但 CLI 仍保留历史兼容别名 `--vcd`。
-- 直接 `--waveform` 查询路径支持 VCD 与 FST。
-- `build-wave-db` 目前仍是以 VCD 为中心的预处理实现，并未替换为 `wellen` 全量落盘，也不应视为 FST 支持路径。
 - 直接 `query-packet --waveform` 适合按需查询；若需要大量重复窗口查询，预构建 wave DB 仍可能更合适。
 - 对非常大的 FST，`query-packet --waveform` 可能较慢。
 - 未提供 `--rtl-root` 时，只能做 waveform-only 分析，无法恢复 exact RTL ownership。
 - `rough-map-chisel` 仅提供粗略候选，不能作为精确来源依据。
+
+### 鸣谢
+
+本项目基于 [wellen](https://github.com/ekiwi/wellen)
