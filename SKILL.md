@@ -46,7 +46,7 @@ cd ~/.codex/skills/hardware-debug-waveform
 ```bash
 python scripts/hw_debug_cli.py inspect-inputs \
   --scala-root /path/to/src/main/scala/xiangshan \
-  --vcd /path/to/run.vcd \
+  --waveform /path/to/run.vcd \
   [--rtl-root /path/to/build/rtl] \
   [--focus-scope TOP.SimTop.core.rob] \
   [--suggestion "hang near rob tail"] \
@@ -55,6 +55,8 @@ python scripts/hw_debug_cli.py inspect-inputs \
 ```
 
 `inspect-inputs` validates paths, reports artifact sizes, checks cache status, and **prints the exact commands to run next**. Use those printed commands as the next steps.
+
+`--waveform` is the primary flag. The legacy `--vcd` alias is still accepted for compatibility.
 
 If it warns that artifacts are large, tell the user before proceeding.
 
@@ -99,12 +101,14 @@ Use this when you need the value of one specific signal at one specific simulati
 
 ```bash
 python scripts/hw_debug_cli.py build-wave-db \
-  --vcd /path/to/run.vcd \
+  --waveform /path/to/run.vcd \
   --window-len 1000 \
   [--out-dir <wave-out>]
 ```
 
 Only use this when you want persisted waveform artifacts, repeated offline queries, or explicit cache reuse. Reuses cache automatically. Add `--force` to rebuild.
+
+This spare path is currently intended for VCD input. Do not rely on it for FST.
 
 ### Step 4b — (Spare path) Query from the built waveform DB
 
@@ -188,6 +192,7 @@ Include only the few source files or artifact paths that materially support the 
 
 - Let `inspect-inputs` choose default artifact paths; only override when the user asks.
 - Prefer direct `--waveform` query commands over `build-wave-db` unless the user explicitly wants persisted waveform artifacts or repeated cached queries.
+- Treat direct `--waveform` queries as the only supported path for FST.
 - Reuse cached artifacts; rebuild only when needed or explicitly requested.
 - Treat `rtl_authority.sqlite3` matches as exact RTL ownership.
 - If no `build/rtl` is provided, label the result `waveform-only analysis`.

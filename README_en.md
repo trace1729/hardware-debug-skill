@@ -13,6 +13,11 @@ The recommended path now uses `wellen` for direct waveform queries:
 
 `build-wave-db` is still available, but it is now a spare path for caching, repeated queries, or workflows that need persisted waveform artifacts.
 
+Format note:
+
+- direct `--waveform` queries use `wellen` and support formats readable by `pywellen`, including VCD and FST
+- the spare `build-wave-db` path is still VCD-oriented and should not be treated as a valid FST path
+
 ## How To Use
 
 ### Install
@@ -34,7 +39,7 @@ $Hardware Debug Waveform explain this module with xxx.vcd
 Required inputs:
 
 - `--scala-root`: Scala/Chisel source tree
-- `--vcd`: waveform path for `inspect-inputs` and `build-wave-db`
+- `--waveform`: waveform path for `inspect-inputs` and `build-wave-db`
 
 Common optional inputs:
 
@@ -54,6 +59,8 @@ Common optional inputs:
 5. The LLM then uses `module_type`, `local_signal_name`, and `focus_scope` to locate the relevant Scala/Chisel source.
 6. `build-wave-db` is only used when cached, materialized waveform artifacts are more useful than direct on-demand querying.
 
+For FST input, only the direct `--waveform` path should be used.
+
 ## Detailed Analysis
 
 ### Subcommand Introduction
@@ -62,7 +69,7 @@ Common optional inputs:
 
 Checks inputs and prints the recommended next commands.
 
-- validates `--scala-root`, `--vcd`, and `--rtl-root`
+- validates `--scala-root`, `--waveform`, and `--rtl-root`
 - estimates waveform and source-tree size
 - prints default artifact locations
 - prints direct waveform query commands first
@@ -85,6 +92,7 @@ Builds one debug packet for one time window.
 - spare mode: `--manifest`
 - optional `--authority` join
 - optional `--focus-scope` narrowing
+- direct packet queries on very large FST files may be slow
 
 #### `query-signal-value`
 
@@ -101,6 +109,7 @@ Builds a persisted waveform database from VCD.
 - now treated as a spare path
 - useful for repeated queries, cache reuse, or offline artifacts
 - current preprocessing implementation remains VCD-oriented
+- should not currently be used as an FST ingestion path
 
 #### `rough-map-chisel`
 
@@ -175,8 +184,10 @@ Meaning:
 
 ### Limitation
 
-- The preferred path uses `wellen`, but `inspect-inputs` and the spare preprocessing flow still use the historical `--vcd` flag name.
-- `build-wave-db` is still a VCD-oriented preprocessing implementation and has not been replaced by a full `wellen` materialization flow.
+- The preferred path uses `wellen`, and the CLI still keeps the historical `--vcd` alias for compatibility.
+- Direct `--waveform` queries support VCD and FST.
+- `build-wave-db` is still a VCD-oriented preprocessing implementation, has not been replaced by a full `wellen` materialization flow, and should not be treated as FST support.
 - Direct `query-packet --waveform` is good for on-demand analysis; prebuilt wave DB artifacts may still be better for heavy repeated queries.
+- Direct `query-packet --waveform` may be slow on very large FST files.
 - Without `--rtl-root`, the workflow becomes waveform-only and cannot recover exact RTL ownership.
 - `rough-map-chisel` remains heuristic and must not be treated as exact source truth.
