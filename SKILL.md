@@ -14,8 +14,7 @@ Core approach:
 - use direct waveform queries as the default evidence path
 - use emitted RTL to recover exact ownership and hierarchy
 - use Scala/Chisel source as the primary material for root-cause analysis
-- use generated SystemVerilog only as a fallback
-- use waveform DB preprocessing only as a spare path when cached artifacts are preferable
+- only inspect generated SystemVerilog if Scala-first analysis is blocked
 
 
 ## Workflow
@@ -30,11 +29,10 @@ Required or useful inputs:
 - Chisel source root
 - optional emitted RTL root (`build/rtl`)
 - optional focus scope (e.g. `TOP.SimTop.core.rob`) or debug hint
-- optional preference for direct `wellen` queries or the legacy VCD-parser 
 
 Recommended prompt when discovery is insufficient:
 
-> Please provide the waveform path, the Chisel source root, and optionally the emitted RTL root (build/rtl), plus any focus scope, debug hint, or preference for direct `wellen` queries versus the legacy VCD-parser.
+> Please provide the waveform path, the Chisel source root, and optionally the emitted RTL root (build/rtl), plus any focus scope or debug hint.
 
 
 All commands run from the skill root directory. Use `cd` once at the start:
@@ -97,18 +95,7 @@ python scripts/hw_debug_cli.py query-signal-value \
 
 Use this when you need the value of one specific signal at one specific simulation time.
 
-### Step 4 — (Spare path) Build waveform DB
-
-The spare wave-DB path is the legacy VCD-parser flow. Use it only when:
-
-- the user explicitly asks for the legacy VCD parser
-- the user explicitly asks to avoid `wellen`
-- the user wants persisted waveform artifacts
-- repeated cached VCD queries are more valuable than direct querying
-
-If you choose this branch, open `wave-db.md` and follow its commands and notes.
-
-### Step 5 — (Optional) Add rough Chisel candidates
+### Step 4 — (Optional) Add rough Chisel candidates
 
 ```bash
 python scripts/hw_debug_cli.py rough-map-chisel \
@@ -119,16 +106,16 @@ python scripts/hw_debug_cli.py rough-map-chisel \
 
 Only run this step if a rough mapping artifact is available. Treat results as guesses, not exact source truth.
 
-### Step 6 — Analyze
+### Step 5 — Analyze
 
 1. Read `focus_signals[*].changes` as raw waveform evidence.
 2. If `rtl.match_status == "exact"`, use `module_type` and `local_signal_name` to narrow the search to the most relevant Scala/Chisel source candidates.
 3. Search the Scala root by module name, signal name, and nearby subsystem names to find the best candidates.
 4. Analyze the Scala/Chisel code first.
-5. Present rough Chisel candidates from step 5 only as secondary, lower-confidence hints.
+5. Present rough Chisel candidates from step 4 only as secondary, lower-confidence hints.
 6. Only inspect generated SystemVerilog if Scala cannot explain the behavior.
 
-If you need a point lookup instead of a window summary, use `query-signal-value`. Prefer the direct waveform mode unless a persisted manifest already exists and is the better fit.
+If you need a point lookup instead of a window summary, use `query-signal-value`.
 
 
 ## Output
@@ -169,8 +156,7 @@ Include only the few source files or artifact paths that materially support the 
 ## Rules
 
 - Let `inspect-inputs` choose default artifact paths; only override when the user asks.
-- If direct `wellen` query fails on a VCD input, fall back to the legacy `build-wave-db -> query --manifest` flow and open `wave-db.md`.
-- If direct `wellen` query fails on an FST input, abort and inform the user.
+- If direct `wellen` query fails, surface the error clearly and remind the user that `main` expects `pywellen`; recommend the `no-pywellen` branch only when they explicitly want to avoid that dependency.
 - Reuse cached artifacts; rebuild only when needed or explicitly requested.
 - Treat `rtl_authority.sqlite3` matches as exact RTL ownership.
 - If no `build/rtl` is provided, label the result `waveform-only analysis`.
@@ -183,7 +169,6 @@ For command flags, artifact layout, and schema details:
 
 - `README_en.md` (English reference)
 - `README.md` (Chinese reference)
-- `wave-db.md` (legacy wave-DB / VCD-parser reference)
 
 For wavedrom language:
 

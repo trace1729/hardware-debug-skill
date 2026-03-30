@@ -4,7 +4,7 @@
 
 This skill provides a structured hardware-debug workflow that combines waveform evidence, emitted RTL, and Scala/Chisel source code for LLM-assisted analysis.
 
-The recommended path now uses `wellen` for direct waveform queries, fallback vcd parsing is still available, but it is now a spare path for caching, repeated queries, or workflows that need persisted waveform artifacts.
+The `main` branch uses `wellen` / `pywellen` for direct waveform queries. Install `pywellen` in the active Python environment. If you want to avoid `pywellen`, check out the `no-pywellen` branch instead.
 
 
 
@@ -30,8 +30,8 @@ git clone https://github.com/trace1729/hardware-debug-skill.git hardware-debug-w
 
 Notes:
 
-- the skill first uses `pywellen` from the active Python environment when available
-- if `pywellen` is missing, it tries the bundled local copy under `wellen/pywellen`
+- the `main` branch expects `pywellen` to be importable from the active Python environment
+- if you want a workflow that avoids `pywellen`, use the `no-pywellen` branch
 
 ### Simple Usage
 
@@ -39,13 +39,12 @@ Notes:
 codex
 $Hardware Debug Waveform help me debug xxx.vcd
 $Hardware Debug Waveform explain this module with xxx.vcd
-$Hardware Debug Waveform avoid pywellen, explain this module with xxx.vcd
 ```
 
 Required inputs:
 
 - `--scala-root`: Scala/Chisel source tree
-- `--waveform`: waveform path for `inspect-inputs` and `build-wave-db`
+- `--waveform`: waveform path for `inspect-inputs`, `query-packet`, and `query-signal-value`
 
 Common optional inputs:
 
@@ -54,7 +53,6 @@ Common optional inputs:
 - `--suggestion`: human debug hint
 - `--top`: RTL top module name, default `SimTop`
 - `--window-len`: time-window length, default `1000`
-- `--avoid-pywellen` explicitly specify avoiding pywellen for vcd parsing to save token and improve speed
 
 ## Basic Pipeline
 
@@ -65,7 +63,7 @@ Common optional inputs:
 3. The preferred path uses `query-packet --waveform` or `query-signal-value --waveform`, which reads the waveform directly through `wellen`.
 4. The generated packet keeps only the relevant changes for the selected window and can attach exact RTL ownership.
 5. The LLM then uses `module_type`, `local_signal_name`, and `focus_scope` to locate the relevant Scala/Chisel source.
-6. The direct query path reuses metadata cached under `artifacts/waveform_meta/`; `build-wave-db` is only used when fully materialized waveform artifacts are more useful.
+6. The direct query path reuses metadata cached under `artifacts/waveform_meta/`.
 
 For FST input, only the direct `--waveform` path should be used.
 
@@ -81,7 +79,6 @@ Checks inputs and prints the recommended next commands.
 - estimates waveform and source-tree size
 - prints default artifact locations
 - prints direct waveform query commands first
-- keeps `build-wave-db` as a spare path
 
 #### `build-authority`
 
@@ -97,7 +94,6 @@ Builds exact RTL authority from emitted RTL.
 Builds one debug packet for one time window.
 
 - preferred mode: `--waveform`
-- spare mode: `--manifest`
 - optional `--authority` join
 - optional `--focus-scope` narrowing
 - direct packet queries on very large FST files may be slow
@@ -107,17 +103,7 @@ Builds one debug packet for one time window.
 Queries one signal at one simulation time.
 
 - preferred mode: `--waveform`
-- spare mode: `--manifest`
 - returns the containing window and the most recent known change at or before the query time
-
-#### `build-wave-db`
-
-Builds a persisted waveform database from VCD.
-
-- now treated as a spare path
-- useful for repeated queries, cache reuse, or offline artifacts
-- current preprocessing implementation remains VCD-oriented
-- should not currently be used as an FST ingestion path
 
 #### `rough-map-chisel`
 
@@ -138,7 +124,6 @@ Default outputs are stored under:
 hardware-debug-waveform/artifacts/
 ├── authority/<fingerprint>/
 ├── waveform_meta/<fingerprint>/
-├── wave_db/<fingerprint>/
 └── packets/<fingerprint>/
 ```
 
@@ -146,15 +131,14 @@ Meaning:
 
 - `authority/`: cache output from `build-authority`
 - `waveform_meta/`: metadata cache used by direct `--waveform` queries
-- `wave_db/`: cache output from `build-wave-db`
 - `packets/`: default packet output location suggested by the CLI
 
 `<fingerprint>` is derived from file signatures and key options, so identical inputs usually reuse the same cache directory.
 
 ### Limitation
 
-- Direct `query-packet --waveform` is good for on-demand analysis; prebuilt wave DB artifacts may still be better for heavy repeated queries.
 - Direct `query-packet --waveform` may be slow on very large FST files.
+- The `main` branch expects `pywellen`; use `no-pywellen` if you want a pywellen-free workflow.
 - Without `--rtl-root`, the workflow becomes waveform-only and cannot recover exact RTL ownership.
 - `rough-map-chisel` remains heuristic and must not be treated as exact source truth.
 

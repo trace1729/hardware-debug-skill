@@ -1,3 +1,6 @@
 __pycache__/
 artifacts/
 *.pyc
+tests
+docs/superpowers
+scripts/native/.bin
