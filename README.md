@@ -4,6 +4,7 @@
 
 使用 `wellen` / `pywellen` 直接查询波形文件，结合 `build/rtl` 构建 chisel -> verilog 信号映射，从而让 LLM 更好地根据波形调试。
 > 当前 `main` 分支要求在正在使用的 Python 环境中安装 `pywellen`。如果你希望完全避免 `pywellen`，请切换到 `no-pywellen` 分支。
+> `no-pywellen` 查询速度更快，准确性上稍弱 
 
 ## 如何使用
 
@@ -29,6 +30,7 @@ git clone https://github.com/trace1729/hardware-debug-skill.git hardware-debug-w
 
 - `main` 分支要求当前 Python 环境中可直接导入 `pywellen`
 - 如果你不想在当前工作流中使用 `pywellen`，请切换到 `no-pywellen` 分支
+- 仅用于避免路径混淆的记录：仓库内仍可见 vendored 路径 `wellen/pywellen/pywellen`
 
 ### 简单使用
 

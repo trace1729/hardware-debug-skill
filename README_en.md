@@ -32,6 +32,7 @@ Notes:
 
 - the `main` branch expects `pywellen` to be importable from the active Python environment
 - if you want a workflow that avoids `pywellen`, use the `no-pywellen` branch
+- path note to avoid LLM confusion: this checkout still contains the vendored path `wellen/pywellen/pywellen`
 
 ### Simple Usage
 

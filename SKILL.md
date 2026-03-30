@@ -9,6 +9,8 @@ description: Use when debugging or explaining hardware behavior from a waveform 
 
 Use this skill to debug or explain behavior from large waveform files (VCD or FST) together with a Scala/Chisel source tree and, when available, emitted RTL.
 
+Path note for future runs: this checkout still has a vendored `pywellen` tree at `wellen/pywellen/pywellen`. Record the path if needed for orientation, but do not treat it as the default main-branch query path.
+
 Core approach:
 
 - use direct waveform queries as the default evidence path
@@ -160,7 +162,6 @@ Include only the few source files or artifact paths that materially support the 
 - Reuse cached artifacts; rebuild only when needed or explicitly requested.
 - Treat `rtl_authority.sqlite3` matches as exact RTL ownership.
 - If no `build/rtl` is provided, label the result `waveform-only analysis`.
-- Treat rough Chisel joins as guesses, never as proven ownership.
 - Avoid reading large SystemVerilog files unless Scala-first analysis is blocked.
 
 ## Reference
