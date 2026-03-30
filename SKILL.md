@@ -191,6 +191,6 @@ For wavedrom language:
 
 - `wavedrom.md`
 
-For artifact:
+For artifact json format or database schema:
 
 - `artifact.md`
