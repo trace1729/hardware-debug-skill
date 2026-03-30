@@ -6,7 +6,9 @@ from pathlib import Path
 import sqlite3
 from typing import IO, Any
 
+from lib.native_fst_helper import iter_fst_records
 from lib.stream_vcd_reader import iter_vcd_changes
+from lib.waveform_formats import detect_waveform_format
 
 
 def _parse_vcd_metadata(lines: Iterable[str]) -> tuple[list[dict[str, Any]], list[dict[str, Any]], dict[str, str]]:
@@ -130,66 +132,75 @@ def _write_signal_metadata_sqlite(path: Path, signals: list[dict[str, Any]], sco
         conn.close()
 
 
-def stream_waveform_store(*, vcd_path: Path, out_dir: Path, window_len: int, version: str = "0.1") -> Path:
-    if window_len < 1:
-        raise ValueError("window_len must be >= 1")
-    out_dir.mkdir(parents=True, exist_ok=True)
-    with vcd_path.open("r", encoding="utf-8", errors="ignore") as f:
-        signals, scopes, id_to_signal = _parse_vcd_metadata(f)
+def _record_change(
+    *,
+    t: int,
+    signal_id: str,
+    value: str,
+    window_len: int,
+    by_window_dir: Path,
+    window_file_map: dict[str, IO[str]],
+    window_map: dict[str, dict[str, Any]],
+    signal_window_map: dict[tuple[str, str], dict[str, Any]],
+) -> int:
+    window_idx = t // window_len
+    window_id = f"w{window_idx}"
+    change = {"t": t, "signal_id": signal_id, "window_id": window_id, "value": value}
+    window_file = window_file_map.get(window_id)
+    if window_file is None:
+        window_file = (by_window_dir / f"{window_id}.jsonl").open("w", encoding="utf-8")
+        window_file_map[window_id] = window_file
+    window_file.write(json.dumps(change, sort_keys=True) + "\n")
+
+    win = window_map.get(window_id)
+    if win is None:
+        window_map[window_id] = {
+            "id": window_id,
+            "t_start": window_idx * window_len,
+            "t_end": ((window_idx + 1) * window_len) - 1,
+            "change_count": 1,
+            "active_signal_ids": {signal_id},
+        }
+    else:
+        win["change_count"] += 1
+        win["active_signal_ids"].add(signal_id)
+
+    key = (signal_id, window_id)
+    row = signal_window_map.get(key)
+    if row is None:
+        signal_window_map[key] = {
+            "signal_id": signal_id,
+            "window_id": window_id,
+            "first_t": t,
+            "last_t": t,
+            "change_count": 1,
+        }
+    else:
+        row["last_t"] = t
+        row["change_count"] += 1
+    return 1
+
+
+def _flush_metadata(out_dir: Path, signals: list[dict[str, Any]], scopes: list[dict[str, Any]]) -> None:
     _write_json(out_dir / "signals.json", signals)
     _write_json(out_dir / "scopes.json", scopes)
     _write_json(out_dir / "scope_signal_index.json", _build_scope_signal_index(signals, scopes))
     _write_signal_metadata_sqlite(out_dir / "signal_metadata.sqlite3", signals, scopes)
+
+
+def _finalize_manifest(
+    *,
+    out_dir: Path,
+    waveform_path: Path,
+    waveform_format: str,
+    version: str,
+    signals: list[dict[str, Any]],
+    scopes: list[dict[str, Any]],
+    window_map: dict[str, dict[str, Any]],
+    signal_window_map: dict[tuple[str, str], dict[str, Any]],
+    change_count: int,
+) -> Path:
     by_window_dir = out_dir / "changes" / "by_window"
-    by_window_dir.mkdir(parents=True, exist_ok=True)
-
-    watched_ids = set(id_to_signal.keys())
-    signal_window_map: dict[tuple[str, str], dict[str, Any]] = {}
-    window_map: dict[str, dict[str, Any]] = {}
-    window_file_map: dict[str, IO[str]] = {}
-    change_count = 0
-    try:
-        with vcd_path.open("r", encoding="utf-8", errors="ignore") as f:
-            for t, id_code, value in iter_vcd_changes(f, watched_ids=watched_ids):
-                signal_id = id_to_signal[id_code]
-                window_idx = t // window_len
-                window_id = f"w{window_idx}"
-                change = {"t": t, "signal_id": signal_id, "window_id": window_id, "value": value}
-                window_file = window_file_map.get(window_id)
-                if window_file is None:
-                    window_file = (by_window_dir / f"{window_id}.jsonl").open("w", encoding="utf-8")
-                    window_file_map[window_id] = window_file
-                window_file.write(json.dumps(change, sort_keys=True) + "\n")
-                change_count += 1
-                win = window_map.get(window_id)
-                if win is None:
-                    window_map[window_id] = {
-                        "id": window_id,
-                        "t_start": window_idx * window_len,
-                        "t_end": ((window_idx + 1) * window_len) - 1,
-                        "change_count": 1,
-                        "active_signal_ids": {signal_id},
-                    }
-                else:
-                    win["change_count"] += 1
-                    win["active_signal_ids"].add(signal_id)
-                key = (signal_id, window_id)
-                row = signal_window_map.get(key)
-                if row is None:
-                    signal_window_map[key] = {
-                        "signal_id": signal_id,
-                        "window_id": window_id,
-                        "first_t": t,
-                        "last_t": t,
-                        "change_count": 1,
-                    }
-                else:
-                    row["last_t"] = t
-                    row["change_count"] += 1
-    finally:
-        for window_file in window_file_map.values():
-            window_file.close()
-
     windows = []
     for window_id in sorted(window_map, key=lambda wid: int(wid[1:])):
         win = window_map[window_id]
@@ -212,7 +223,7 @@ def stream_waveform_store(*, vcd_path: Path, out_dir: Path, window_len: int, ver
     _write_json(out_dir / "window_index.json", window_index)
     manifest = {
         "version": version,
-        "waveform": {"path": str(vcd_path), "format": "vcd"},
+        "waveform": {"path": str(waveform_path), "format": waveform_format},
         "summary": {
             "signal_count": len(signals),
             "scope_count": len(scopes),
@@ -233,3 +244,110 @@ def stream_waveform_store(*, vcd_path: Path, out_dir: Path, window_len: int, ver
     manifest_path = out_dir / "manifest.json"
     _write_json(manifest_path, manifest)
     return manifest_path
+
+
+def stream_waveform_store(
+    *,
+    waveform_path: Path | None = None,
+    vcd_path: Path | None = None,
+    out_dir: Path,
+    window_len: int,
+    version: str = "0.2",
+) -> Path:
+    if window_len < 1:
+        raise ValueError("window_len must be >= 1")
+    if waveform_path is None:
+        if vcd_path is None:
+            raise ValueError("waveform_path or vcd_path is required")
+        waveform_path = vcd_path
+    waveform_format = detect_waveform_format(waveform_path)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    by_window_dir = out_dir / "changes" / "by_window"
+    by_window_dir.mkdir(parents=True, exist_ok=True)
+
+    signal_window_map: dict[tuple[str, str], dict[str, Any]] = {}
+    window_map: dict[str, dict[str, Any]] = {}
+    window_file_map: dict[str, IO[str]] = {}
+    change_count = 0
+    signals: list[dict[str, Any]] = []
+    scopes: list[dict[str, Any]] = []
+    metadata_written = False
+    try:
+        if waveform_format == "vcd":
+            with waveform_path.open("r", encoding="utf-8", errors="ignore") as f:
+                signals, scopes, id_to_signal = _parse_vcd_metadata(f)
+            _flush_metadata(out_dir, signals, scopes)
+            metadata_written = True
+            watched_ids = set(id_to_signal.keys())
+            with waveform_path.open("r", encoding="utf-8", errors="ignore") as f:
+                for t, id_code, value in iter_vcd_changes(f, watched_ids=watched_ids):
+                    window_file = window_file_map.get(f"w{t // window_len}")
+                    if window_file is None:
+                        window_id = f"w{t // window_len}"
+                        window_file = (by_window_dir / f"{window_id}.jsonl").open("w", encoding="utf-8")
+                        window_file_map[window_id] = window_file
+                    change_count += _record_change(
+                        t=t,
+                        signal_id=id_to_signal[id_code],
+                        value=value,
+                        window_len=window_len,
+                        by_window_dir=by_window_dir,
+                        window_file_map=window_file_map,
+                        window_map=window_map,
+                        signal_window_map=signal_window_map,
+                    )
+        else:
+            source_id_to_signal: dict[str, str] = {}
+            for record in iter_fst_records(waveform_path):
+                record_type = record["type"]
+                if record_type == "scope":
+                    scopes.append(record)
+                    continue
+                if record_type == "signal":
+                    signal_id = f"sig{len(signals)}"
+                    signal = {
+                        "signal_id": signal_id,
+                        "scope_id": record.get("scope_id"),
+                        "full_wave_path": record["full_wave_path"],
+                        "local_name": record["local_name"],
+                        "bit_width": record["bit_width"],
+                        "value_kind": record["value_kind"],
+                        "source_id": record["source_id"],
+                    }
+                    signals.append(signal)
+                    source_id_to_signal[record["source_id"]] = signal_id
+                    continue
+                if record_type == "change":
+                    if not metadata_written:
+                        _flush_metadata(out_dir, signals, scopes)
+                        metadata_written = True
+                    window_id = f"w{int(record['t']) // window_len}"
+                    if window_id not in window_file_map:
+                        window_file_map[window_id] = (by_window_dir / f"{window_id}.jsonl").open("w", encoding="utf-8")
+                    signal_id = source_id_to_signal[record["source_id"]]
+                    change_count += _record_change(
+                        t=int(record["t"]),
+                        signal_id=signal_id,
+                        value=record["value"],
+                        window_len=window_len,
+                        by_window_dir=by_window_dir,
+                        window_file_map=window_file_map,
+                        window_map=window_map,
+                        signal_window_map=signal_window_map,
+                    )
+            if not metadata_written:
+                _flush_metadata(out_dir, signals, scopes)
+    finally:
+        for window_file in window_file_map.values():
+            window_file.close()
+    return _finalize_manifest(
+        out_dir=out_dir,
+        waveform_path=waveform_path,
+        waveform_format=waveform_format,
+        version=version,
+        signals=signals,
+        scopes=scopes,
+        window_map=window_map,
+        signal_window_map=signal_window_map,
+        change_count=change_count,
+    )

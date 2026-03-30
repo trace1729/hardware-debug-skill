@@ -18,9 +18,10 @@ if str(SCRIPT_DIR) not in sys.path:
 from lib.build_debug_packet import build_debug_packet_from_manifest, query_signal_value_from_manifest
 from lib.build_rtl_authority import build_rtl_authority
 from lib.ingest_waveform import stream_waveform_store
+from lib.waveform_formats import detect_waveform_format
 
 
-WARN_VCD_BYTES = 1 * 1024 * 1024 * 1024
+WARN_WAVEFORM_BYTES = 1 * 1024 * 1024 * 1024
 WARN_TREE_BYTES = 512 * 1024 * 1024
 WARN_RTL_FILES = 1000
 ARTIFACTS_DIR = SKILL_DIR / "artifacts"
@@ -102,7 +103,10 @@ def _wave_cache_meta(*, vcd: Path, window_len: int) -> dict[str, Any]:
     return {
         "kind": "wave_db",
         "window_len": window_len,
-        "vcd": _file_signature(vcd),
+        "waveform": {
+            "format": detect_waveform_format(vcd),
+            "file": _file_signature(vcd),
+        },
     }
 
 
@@ -147,9 +151,21 @@ def _self_cmd() -> str:
     return "python scripts/hw_debug_cli.py"
 
 
+def _resolve_waveform_arg(args: argparse.Namespace) -> Path:
+    waveform = getattr(args, "waveform", None)
+    vcd = getattr(args, "vcd", None)
+    if waveform is not None and vcd is not None and waveform != vcd:
+        raise SystemExit("provide either --waveform or --vcd, not both")
+    resolved = waveform or vcd
+    if resolved is None:
+        raise SystemExit("one of --waveform or --vcd is required")
+    return resolved
+
+
 def _cmd_inspect_inputs(args: argparse.Namespace) -> int:
+    waveform = _resolve_waveform_arg(args)
     _validate(args.scala_root, "scala-root")
-    _validate(args.vcd, "vcd")
+    _validate(waveform, "waveform")
 
     rtl_files = 0
     rtl_bytes = 0
@@ -157,17 +173,17 @@ def _cmd_inspect_inputs(args: argparse.Namespace) -> int:
         _validate(args.rtl_root, "rtl-root")
         rtl_files, rtl_bytes = _dir_stats(args.rtl_root)
     scala_files, scala_bytes = _dir_stats(args.scala_root)
-    vcd_bytes = args.vcd.stat().st_size
+    waveform_bytes = waveform.stat().st_size
     authority_out = args.authority_out or (
         _default_authority_out(rtl_root=args.rtl_root, top=args.top) if args.rtl_root is not None else None
     )
-    wave_out = args.wave_out or _default_wave_out(vcd=args.vcd, window_len=args.window_len)
+    wave_out = args.wave_out or _default_wave_out(vcd=waveform, window_len=args.window_len)
     packet_out = args.packet_out or _default_packet_out(wave_out=wave_out, window_id="wN")
 
     print("Validated inputs")
     print(f"rtl-root: {args.rtl_root if args.rtl_root is not None else '<not provided>'}")
     print(f"scala-root: {args.scala_root}")
-    print(f"vcd: {args.vcd}")
+    print(f"waveform: {waveform}")
     print()
     print("Artifact sizes")
     if args.rtl_root is not None:
@@ -175,12 +191,12 @@ def _cmd_inspect_inputs(args: argparse.Namespace) -> int:
     else:
         print("rtl-root: <not provided>")
     print(f"scala-root: files={scala_files} size={_format_bytes(scala_bytes)}")
-    print(f"vcd: size={_format_bytes(vcd_bytes)}")
+    print(f"waveform: size={_format_bytes(waveform_bytes)}")
     print()
 
     warnings: list[str] = []
-    if vcd_bytes >= WARN_VCD_BYTES:
-        warnings.append("VCD is very large; waveform DB generation may take minutes and produce multi-GB outputs.")
+    if waveform_bytes >= WARN_WAVEFORM_BYTES:
+        warnings.append("Waveform is very large; waveform DB generation may take minutes and produce multi-GB outputs.")
     if args.rtl_root is not None and (rtl_files >= WARN_RTL_FILES or rtl_bytes >= WARN_TREE_BYTES):
         warnings.append("RTL tree is large; authority extraction may take noticeable time and memory.")
     if warnings:
@@ -213,7 +229,7 @@ def _cmd_inspect_inputs(args: argparse.Namespace) -> int:
         print(f"authority: {'cache hit' if authority_hit else 'rebuild required'}")
     else:
         print("authority: skipped")
-    wave_meta = _wave_cache_meta(vcd=args.vcd, window_len=args.window_len)
+    wave_meta = _wave_cache_meta(vcd=waveform, window_len=args.window_len)
     wave_hit = _cache_matches(
         wave_out,
         wave_meta,
@@ -226,7 +242,7 @@ def _cmd_inspect_inputs(args: argparse.Namespace) -> int:
         print(f"{_self_cmd()} build-authority --rtl-root {args.rtl_root} --top {args.top} --out-dir {authority_out}")
     else:
         print("waveform-only analysis mode: exact RTL authority build is skipped")
-    print(f"{_self_cmd()} build-wave-db --vcd {args.vcd} --out-dir {wave_out} --window-len {args.window_len}")
+    print(f"{_self_cmd()} build-wave-db --waveform {waveform} --out-dir {wave_out} --window-len {args.window_len}")
     packet_cmd = f"{_self_cmd()} query-packet --manifest {wave_out / 'manifest.json'} --window-id <wN> --out {packet_out}"
     if args.rtl_root is not None:
         packet_cmd += f" --authority {authority_out / 'rtl_authority.sqlite3'}"
@@ -260,8 +276,9 @@ def _cmd_build_authority(args: argparse.Namespace) -> int:
 
 
 def _cmd_build_wave_db(args: argparse.Namespace) -> int:
-    out_dir = args.out_dir or _default_wave_out(vcd=args.vcd, window_len=args.window_len)
-    cache_meta = _wave_cache_meta(vcd=args.vcd, window_len=args.window_len)
+    waveform = _resolve_waveform_arg(args)
+    out_dir = args.out_dir or _default_wave_out(vcd=waveform, window_len=args.window_len)
+    cache_meta = _wave_cache_meta(vcd=waveform, window_len=args.window_len)
     if not args.force and _cache_matches(
         out_dir,
         cache_meta,
@@ -269,7 +286,7 @@ def _cmd_build_wave_db(args: argparse.Namespace) -> int:
     ):
         print(f"cache hit: reusing waveform DB at {out_dir}")
         return 0
-    stream_waveform_store(vcd_path=args.vcd, out_dir=out_dir, window_len=args.window_len)
+    stream_waveform_store(waveform_path=waveform, out_dir=out_dir, window_len=args.window_len)
     _store_cache_meta(out_dir, cache_meta)
     print(f"built waveform DB at {out_dir}")
     return 0
@@ -369,7 +386,8 @@ def build_parser() -> argparse.ArgumentParser:
     inspect_p = sub.add_parser("inspect-inputs")
     inspect_p.add_argument("--rtl-root", type=Path)
     inspect_p.add_argument("--scala-root", required=True, type=Path)
-    inspect_p.add_argument("--vcd", required=True, type=Path)
+    inspect_p.add_argument("--waveform", type=Path)
+    inspect_p.add_argument("--vcd", type=Path)
     inspect_p.add_argument("--focus-scope")
     inspect_p.add_argument("--suggestion")
     inspect_p.add_argument("--top", default="SimTop")
@@ -387,7 +405,8 @@ def build_parser() -> argparse.ArgumentParser:
     auth_p.set_defaults(func=_cmd_build_authority)
 
     wave_p = sub.add_parser("build-wave-db")
-    wave_p.add_argument("--vcd", required=True, type=Path)
+    wave_p.add_argument("--waveform", type=Path)
+    wave_p.add_argument("--vcd", type=Path)
     wave_p.add_argument("--out-dir", type=Path)
     wave_p.add_argument("--window-len", type=int, default=1000)
     wave_p.add_argument("--force", action="store_true")

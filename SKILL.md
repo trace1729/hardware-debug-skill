@@ -1,13 +1,13 @@
 ---
 name: hardware-debug-waveform
-description: Use when analyzing a hardware failure from a VCD waveform, a XiangShan-style Chisel source tree, and optionally emitted RTL. Handles waveform-to-RTL ownership lookup, cache-aware artifact planning, and rough RTL-to-Chisel recovery.
+description: Use when analyzing a hardware failure from a waveform dump (`.vcd` or `.fst`), a XiangShan-style Chisel source tree, and optionally emitted RTL. Handles waveform-to-RTL ownership lookup, cache-aware artifact planning, and rough RTL-to-Chisel recovery.
 ---
 
 # Hardware Debug Waveform
 
 ## Overview
 
-Use this skill to debug hardware failures from large VCD waveforms with a Scala/Chisel source tree and, when available, emitted RTL.
+Use this skill to debug hardware failures from large waveform dumps (`.vcd` or `.fst`) with a Scala/Chisel source tree and, when available, emitted RTL.
 
 Core approach:
 
@@ -24,14 +24,14 @@ If the user has not already provided them, first try to discover them reliably f
 
 Required or useful inputs:
 
-- VCD path
+- waveform path (`.vcd` or `.fst`)
 - Chisel source root
 - optional emitted RTL root (`build/rtl`)
 - optional focus scope (e.g. `TOP.SimTop.core.rob`) or debug hint
 
 Recommended prompt when discovery is insufficient:
 
-> Please provide the VCD path, the Chisel source root, and optionally the emitted RTL root (build/rtl), plus any focus scope or debug hint you want me to use.
+> Please provide the waveform path (`.vcd` or `.fst`), the Chisel source root, and optionally the emitted RTL root (build/rtl), plus any focus scope or debug hint you want me to use.
 
 
 All commands run from the skill root directory. Use `cd` once at the start:
@@ -45,7 +45,7 @@ cd ~/.codex/skills/hardware-debug-waveform
 ```bash
 python scripts/hw_debug_cli.py inspect-inputs \
   --scala-root /path/to/src/main/scala/xiangshan \
-  --vcd /path/to/run.vcd \
+  --waveform /path/to/run.fst \
   [--rtl-root /path/to/build/rtl] \
   [--focus-scope TOP.SimTop.core.rob] \
   [--suggestion "hang near rob tail"] \
@@ -72,12 +72,14 @@ Reuses cache automatically. Add `--force` to rebuild.
 
 ```bash
 python scripts/hw_debug_cli.py build-wave-db \
-  --vcd /path/to/run.vcd \
+  --waveform /path/to/run.fst \
   --window-len 1000 \
   [--out-dir <wave-out>]
 ```
 
 Reuses cache automatically. Add `--force` to rebuild.
+
+`--vcd` remains available as a compatibility alias for older command lines.
 
 ### Step 4 — Query a debug packet
 
@@ -152,8 +154,6 @@ Write the answer in two parts:
   1. Support `Function` by using the Scala/Chisel source to explain what the module does, and by using waveform evidence to analyze its key pipeline signals and timing behavior when sufficient evidence is available.
   2. Support `Structure` with the main state, buffers, queues, or submodules.
   3. Support `Interconnect` with the other modules, or interfaces that matter most.
-
-Offer WaveDrom only when a short timing diagram with a small number of significant signals would materially clarify the analysis. Do not ask by default.
 
 Use precise terms in the detailed analysis:
 

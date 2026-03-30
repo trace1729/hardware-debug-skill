@@ -2,7 +2,7 @@
 
 ## Summary
 
-This skill is a portable hardware-debug workflow for large VCD waveforms: it validates inputs, builds an exact RTL authority table from emitted RTL when available, converts the waveform into a queryable database, and generates compact debug packets that bundle waveform evidence with hierarchy and ownership hints.
+This skill is a portable hardware-debug workflow for large waveform dumps (`.vcd` or `.fst`): it validates inputs, builds an exact RTL authority table from emitted RTL when available, converts the waveform into a queryable database, and generates compact debug packets that bundle waveform evidence with hierarchy and ownership hints.
 
 ## How to use
 
@@ -18,6 +18,7 @@ git clone https://github.com/trace1729/hardware-debug-skill.git
 codex
 $Hardware Debug Waveform
 $Hardware Debug Waveform xxx trigger assert, help me debug with xxx.vcd
+$Hardware Debug Waveform xxx trigger assert, help me debug with xxx.fst
 $Hardware Debug Waveform explain the module with xxx.vcd
 ```
 
@@ -25,7 +26,7 @@ $Hardware Debug Waveform explain the module with xxx.vcd
 
 The skill expects:
 
-- `--vcd`: path to the waveform VCD file
+- `--waveform`: path to the waveform file, supporting `.vcd` and `.fst`
 - `--scala-root`: path to the Chisel source tree, usually `src/main/scala/xiangshan`
 
 Optional inputs:
@@ -35,6 +36,10 @@ Optional inputs:
 - `--suggestion`: a human hint such as `hang near dispatch` or `wrong commit behavior`
 - `--top`: RTL top module name, default `SimTop`
 - `--window-len`: window size for waveform preprocessing, default `1000`
+
+Compatibility note:
+
+- `--vcd` still works as an alias for `--waveform`
 
 
 
@@ -54,7 +59,7 @@ The `<fingerprint>` is derived from the input files and key options.
 For example:
 
 - authority cache key uses the RTL tree signature and `--top`
-- waveform DB cache key uses the VCD file signature and `--window-len`
+- waveform DB cache key uses the waveform file signature and `--window-len`
 
 You can still override the location explicitly with `--out-dir` or `--out`.
 
@@ -71,7 +76,7 @@ Checks inputs and prints the recommended command sequence.
 Basic function:
 
 - verifies that the provided paths exist
-- prints tree size and VCD size
+- prints tree size and waveform size
 - warns when preprocessing may be expensive
 - supports waveform-only analysis if `--rtl-root` is omitted
 
@@ -106,12 +111,12 @@ Important role:
 
 ### `build-wave-db`
 
-Builds a canonical waveform database from the VCD.
+Builds a canonical waveform database from the waveform file.
 
 Basic function:
 
-- parses VCD metadata
-- captures all traced signals in the VCD header
+- parses VCD metadata directly for `.vcd`
+- parses FST hierarchy and value changes directly for `.fst`
 - streams value changes into time windows
 - materializes metadata and query indexes on disk
 
@@ -119,7 +124,7 @@ Example:
 
 ```bash
 python scripts/hw_debug_cli.py build-wave-db \
-  --vcd /path/to/run.vcd \
+  --waveform /path/to/run.fst \
   --window-len 1000
 ```
 

@@ -2,7 +2,7 @@
 
 ## 总结
 
-基于vcd构建层次化的数据文件，基于build/rtl 构建 chisel -> verilog 信号映射，从而让LLM更好的根据波形调试。
+基于波形文件（`.vcd` 或 `.fst`）构建层次化的数据文件，基于build/rtl 构建 chisel -> verilog 信号映射，从而让LLM更好的根据波形调试。
 
 ## 如何使用
 
@@ -17,6 +17,7 @@ git clone https://github.com/trace1729/hardware-debug-skill.git
 ```
 codex
 $Hardware Debug Waveform xxx trigger assert, help me debug with xxx.vcd
+$Hardware Debug Waveform xxx trigger assert, help me debug with xxx.fst
 $Hardware Debug Waveform explain the module with xxx.vcd
 ```
 
@@ -24,7 +25,7 @@ $Hardware Debug Waveform explain the module with xxx.vcd
 
 这个 skill 期望的输入为：
 
-- `--vcd`：VCD 波形文件路径
+- `--waveform`：波形文件路径，支持 `.vcd` 和 `.fst`
 - `--scala-root`：Chisel 源码树路径，通常是 `src/main/scala/xiangshan`
 
 可选输入：
@@ -34,6 +35,10 @@ $Hardware Debug Waveform explain the module with xxx.vcd
 - `--suggestion`：人工提供的调试提示，比如 `hang near dispatch`
 - `--top`：RTL 顶层模块名，默认 `SimTop`
 - `--window-len`：波形切窗长度，默认 `1000`
+
+兼容性说明：
+
+- `--vcd` 仍然保留，作为 `--waveform` 的兼容别名
 
 
 ### 构建的临时产物存放位置
@@ -52,7 +57,7 @@ hardware-debug-waveform/artifacts/
 例如：
 
 - authority 的 cache key 取决于 RTL 树签名和 `--top`
-- waveform DB 的 cache key 取决于 VCD 文件签名和 `--window-len`
+- waveform DB 的 cache key 取决于波形文件签名和 `--window-len`
 
 如果需要，你仍然可以通过 `--out-dir` 或 `--out` 显式改写输出位置。
 
@@ -69,7 +74,7 @@ hardware-debug-waveform/artifacts/
 基础功能：
 
 - 检查路径是否有效
-- 输出文件树大小和 VCD 文件大小
+- 输出文件树大小和波形文件大小
 - 当预处理成本较高时给出告警
 - 如果没有 `--rtl-root`，自动进入 waveform-only 分析模式
 
@@ -104,12 +109,12 @@ python scripts/hw_debug_cli.py build-authority \
 
 ### `build-wave-db`
 
-把 VCD 转成规范化的波形数据库。
+把波形文件转成规范化的波形数据库。
 
 基础功能：
 
-- 解析 VCD header
-- 捕获 header 中声明的全部 traced signal
+- 对 `.vcd` 直接解析 VCD header
+- 对 `.fst` 直接解析 FST 层级和 value change
 - 流式读取 value change
 - 按时间窗口落盘成可查询的索引和数据分片
 
@@ -117,7 +122,7 @@ python scripts/hw_debug_cli.py build-authority \
 
 ```bash
 python scripts/hw_debug_cli.py build-wave-db \
-  --vcd /path/to/run.vcd \
+  --waveform /path/to/run.fst \
   --window-len 1000
 ```
 
