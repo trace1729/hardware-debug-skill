@@ -2,9 +2,10 @@
 
 ## 总结
 
-使用 `wellen` / `pywellen` 直接查询波形文件，结合 `build/rtl` 构建 chisel -> verilog 信号映射，从而让 LLM 更好地根据波形调试。
-> 当前 `main` 分支要求在正在使用的 Python 环境中安装 `pywellen`。如果你希望完全避免 `pywellen`，请切换到 `no-pywellen` 分支。
-> `no-pywellen` 会构建更多的离线缓存，查询ge更快，准确性上稍弱
+使用 `pywellen` 直接查询波形文件，结合 `build/rtl` 构建 chisel -> verilog 信号映射，从而让 LLM 更好地根据波形调试。
+>  优先使用环境中的 pywellen 库，如果没有将使用 skill 内置的。
+
+> `no-pywellen` 会构建更多的离线缓存，查询更快，准确性上稍弱,  如果你希望完全避免 `pywellen`，请切换到 `no-pywellen` 分支。
 
 ## 如何使用
 
@@ -14,6 +15,7 @@
 # codex
 mkdir -p ~/.codex/skills/
 cd ~/.codex/skills
+```
 
 ```bash
 # or claude code
@@ -22,7 +24,7 @@ cd ~/.claude/skills/
 ```
 
 ```bash
-pip install pywellen
+pip install pywellen # 也可以指定 codex 使用 skill 内置的 pywellen
 git clone https://github.com/trace1729/hardware-debug-skill.git hardware-debug-waveform
 cd hardware-debug-waveform
 # optionly

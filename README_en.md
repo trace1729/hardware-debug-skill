@@ -16,6 +16,7 @@ The `main` branch uses `wellen` / `pywellen` for direct waveform queries. Instal
 # codex
 mkdir -p ~/.codex/skills/
 cd ~/.codex/skills
+```
 
 ```bash
 # or claude code
