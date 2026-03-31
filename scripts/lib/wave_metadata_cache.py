@@ -25,6 +25,8 @@ def build_wave_metadata_cache(*, waveform_path: Path, out_dir: Path, version: st
     if waveform_format == "vcd":
         with waveform_path.open("r", encoding="utf-8", errors="ignore") as f:
             signals, scopes, _ = _parse_vcd_metadata(f)
+        for signal in signals:
+            signal["source_id"] = signal.get("vcd_id_code")
     else:
         for record in iter_fst_records(waveform_path, command="meta"):
             record_type = record["type"]

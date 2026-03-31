@@ -12,6 +12,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 FIXTURES = ROOT / "tests" / "fixtures"
 SIMPLE_FST = FIXTURES / "simple.fst"
+SIMPLE_VCD = FIXTURES / "simple.vcd"
 
 
 def _run_cli(*args: str) -> subprocess.CompletedProcess[str]:
@@ -64,6 +65,51 @@ class DirectFstQueryTests(unittest.TestCase):
                 "query-packet",
                 "--waveform",
                 str(SIMPLE_FST),
+                "--focus-scope",
+                "TOP",
+                "--t-start",
+                "0",
+                "--t-end",
+                "10",
+                "--out",
+                str(out_path),
+            )
+
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+            payload = json.loads(out_path.read_text(encoding="utf-8"))
+            self.assertEqual(payload["query"]["focus_scope"], "TOP")
+            self.assertEqual(payload["query"]["t_start"], 0)
+            self.assertEqual(payload["query"]["t_end"], 10)
+            self.assertEqual(payload["window_summary"]["active_signal_count"], 2)
+            self.assertEqual(payload["window_summary"]["change_count"], 4)
+            signals = {signal["full_wave_path"]: signal for signal in payload["focus_signals"]}
+            self.assertEqual(sorted(signals), ["TOP.clk", "TOP.sig"])
+            self.assertEqual([change["t"] for change in signals["TOP.clk"]["changes"]], [0, 5])
+            self.assertEqual([change["t"] for change in signals["TOP.sig"]["changes"]], [0, 10])
+
+    def test_query_signal_value_can_read_vcd_directly_without_manifest(self) -> None:
+        proc = _run_cli(
+            "query-signal-value",
+            "--waveform",
+            str(SIMPLE_VCD),
+            "--signal",
+            "TOP.clk",
+            "--time",
+            "5",
+        )
+
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        payload = json.loads(proc.stdout)
+        self.assertEqual(payload["value_at_time"]["value"], "1")
+        self.assertEqual(payload["signal"]["full_wave_path"], "TOP.clk")
+
+    def test_query_packet_can_read_vcd_directly_without_wave_db_manifest(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            out_path = Path(tmpdir) / "packet.json"
+            proc = _run_cli(
+                "query-packet",
+                "--waveform",
+                str(SIMPLE_VCD),
                 "--focus-scope",
                 "TOP",
                 "--t-start",

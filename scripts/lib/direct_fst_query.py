@@ -11,6 +11,7 @@ from lib.build_debug_packet import (
     build_debug_packet,
 )
 from lib.native_fst_helper import query_fst_range, query_fst_value_at_time
+from lib.stream_vcd_reader import iter_vcd_changes
 from lib.wave_metadata_cache import build_wave_metadata_cache
 from lib.waveform_formats import detect_waveform_format
 
@@ -85,6 +86,41 @@ def _load_or_build_manifest(*, waveform_path: Path, meta_out_dir: Path) -> dict[
     return json.loads(manifest_path.read_text(encoding="utf-8"))
 
 
+def _query_vcd_value_at_time(*, vcd_path: Path, source_id: str, t: int) -> dict[str, Any]:
+    latest_change = None
+    with vcd_path.open("r", encoding="utf-8", errors="ignore") as f:
+        for change_t, change_source_id, value in iter_vcd_changes(f, watched_ids={source_id}):
+            if change_t > t:
+                break
+            latest_change = {
+                "found": True,
+                "t": change_t,
+                "value": value,
+            }
+    if latest_change is None:
+        return {"found": False, "t": None, "value": None}
+    return latest_change
+
+
+def _query_vcd_range(*, vcd_path: Path, source_ids: set[str], t_start: int, t_end: int) -> list[dict[str, Any]]:
+    changes: list[dict[str, Any]] = []
+    with vcd_path.open("r", encoding="utf-8", errors="ignore") as f:
+        for change_t, change_source_id, value in iter_vcd_changes(f, watched_ids=source_ids):
+            if change_t < t_start:
+                continue
+            if change_t > t_end:
+                break
+            changes.append(
+                {
+                    "type": "change",
+                    "t": change_t,
+                    "source_id": change_source_id,
+                    "value": value,
+                }
+            )
+    return changes
+
+
 def query_signal_value_from_fst(
     *,
     waveform_path: Path,
@@ -94,9 +130,7 @@ def query_signal_value_from_fst(
 ) -> dict[str, Any]:
     if t < 0:
         raise ValueError("time must be >= 0")
-    if detect_waveform_format(waveform_path) != "fst":
-        raise ValueError("direct waveform query currently supports only .fst inputs")
-
+    waveform_format = detect_waveform_format(waveform_path)
     manifest = _load_or_build_manifest(waveform_path=waveform_path, meta_out_dir=meta_out_dir)
     signal_db = Path(manifest["tables"]["signal_metadata_db"])
     signal_row = _load_signal_row(signal_db=signal_db, full_wave_path=full_wave_path)
@@ -104,14 +138,23 @@ def query_signal_value_from_fst(
         raise ValueError(f"signal not found in waveform metadata: {full_wave_path}")
     source_id = signal_row.get("source_id")
     if not source_id:
-        raise ValueError(f"signal is missing fst source_id metadata: {full_wave_path}")
+        raise ValueError(f"signal is missing source_id metadata: {full_wave_path}")
 
-    helper_value = query_fst_value_at_time(
-        fst_path=waveform_path,
-        source_id=source_id,
-        t=t,
-        bit_width=int(signal_row["bit_width"]),
-    )
+    if waveform_format == "fst":
+        helper_value = query_fst_value_at_time(
+            fst_path=waveform_path,
+            source_id=source_id,
+            t=t,
+            bit_width=int(signal_row["bit_width"]),
+        )
+    elif waveform_format == "vcd":
+        helper_value = _query_vcd_value_at_time(
+            vcd_path=waveform_path,
+            source_id=source_id,
+            t=t,
+        )
+    else:
+        raise ValueError(f"unsupported waveform format for direct query: {waveform_format}")
     return {
         "version": "0.1",
         "query": {
@@ -153,9 +196,7 @@ def build_debug_packet_from_fst(
         raise ValueError("time range must be >= 0")
     if t_end < t_start:
         raise ValueError("t_end must be >= t_start")
-    if detect_waveform_format(waveform_path) != "fst":
-        raise ValueError("direct packet query currently supports only .fst inputs")
-
+    waveform_format = detect_waveform_format(waveform_path)
     manifest = _load_or_build_manifest(waveform_path=waveform_path, meta_out_dir=meta_out_dir)
     signal_db = Path(manifest["tables"]["signal_metadata_db"])
     signal_rows = _load_signal_rows(signal_db=signal_db, focus_scope=focus_scope)
@@ -164,12 +205,22 @@ def build_debug_packet_from_fst(
         for row in signal_rows
         if row.get("source_id")
     }
-    direct_changes = query_fst_range(
-        fst_path=waveform_path,
-        source_ids=list(source_id_to_signal),
-        t_start=t_start,
-        t_end=t_end,
-    )
+    if waveform_format == "fst":
+        direct_changes = query_fst_range(
+            fst_path=waveform_path,
+            source_ids=list(source_id_to_signal),
+            t_start=t_start,
+            t_end=t_end,
+        )
+    elif waveform_format == "vcd":
+        direct_changes = _query_vcd_range(
+            vcd_path=waveform_path,
+            source_ids=set(source_id_to_signal),
+            t_start=t_start,
+            t_end=t_end,
+        )
+    else:
+        raise ValueError(f"unsupported waveform format for direct packet query: {waveform_format}")
     changes = []
     for change in direct_changes:
         signal_row = source_id_to_signal.get(change.get("source_id"))
