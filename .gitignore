@@ -1,5 +1,6 @@
 __pycache__/
 artifacts/
+.worktrees/
 *.pyc
 docs/superpowers
 tests/*
