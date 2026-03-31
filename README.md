@@ -469,7 +469,7 @@ python scripts/hw_debug_cli.py rough-map-chisel \
 
 主要用途：
 
-- 快速定位某个窗口对应的 JSONL 数据分片
+- 快速定位某个窗口对应的 change 数据分片
 
 #### `signal_window_index.json`
 
@@ -488,7 +488,7 @@ python scripts/hw_debug_cli.py rough-map-chisel \
 - 判断某个 signal 是否在某个窗口发生变化
 - 查看该 signal 在该窗口中的第一次和最后一次变化时间
 
-#### `changes/by_window/wN.jsonl`
+#### `changes/by_window/wN.tsv`
 
 这是某一个窗口对应的原始 change shard。
 
@@ -496,8 +496,12 @@ python scripts/hw_debug_cli.py rough-map-chisel \
 
 - `t`：仿真时间
 - `signal_id`
-- `window_id`
 - `value`
+
+说明：
+
+- `window_id` 不再在每行重复存储，而是由文件名 `wN.tsv` 隐含表示
+- 查询逻辑仍兼容旧的 `wN.jsonl` cache
 
 主要用途：
 

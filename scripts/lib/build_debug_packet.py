@@ -10,6 +10,18 @@ def _load_json(path: str | Path) -> Any:
     return json.loads(Path(path).read_text(encoding="utf-8"))
 
 
+def _parse_window_change_line(*, line: str, shard_path: Path, window_id: str | None = None) -> dict[str, Any]:
+    if shard_path.suffix == ".tsv":
+        t_text, signal_id, value = line.rstrip("\n").split("\t", 2)
+        return {
+            "signal_id": signal_id,
+            "t": int(t_text),
+            "value": value,
+            "window_id": window_id or shard_path.stem,
+        }
+    return json.loads(line)
+
+
 def _normalize_authority_rows(authority_rows: list[dict[str, Any]] | None = None, authority: dict[str, Any] | None = None) -> list[dict[str, Any]]:
     if authority_rows is not None:
         return authority_rows
@@ -227,10 +239,11 @@ def build_debug_packet_from_manifest(*, manifest: dict[str, Any], authority: dic
     window_index = _load_json(manifest["tables"]["window_index"])
     shard = next(row for row in window_index if row["window_id"] == window_id)
     changes = []
-    with Path(shard["path"]).open("r", encoding="utf-8") as f:
+    shard_path = Path(shard["path"])
+    with shard_path.open("r", encoding="utf-8") as f:
         for line in f:
             if line.strip():
-                changes.append(json.loads(line))
+                changes.append(_parse_window_change_line(line=line, shard_path=shard_path, window_id=window_id))
     store = {
         "version": manifest["version"],
         "waveform": manifest["waveform"],
@@ -295,11 +308,12 @@ def query_signal_value_from_manifest(*, manifest: dict[str, Any], full_wave_path
         shard_path = shard_path_by_window.get(row["window_id"])
         if shard_path is None:
             continue
-        with Path(shard_path).open("r", encoding="utf-8") as f:
+        shard_path_obj = Path(shard_path)
+        with shard_path_obj.open("r", encoding="utf-8") as f:
             for line in f:
                 if not line.strip():
                     continue
-                change = json.loads(line)
+                change = _parse_window_change_line(line=line, shard_path=shard_path_obj, window_id=row["window_id"])
                 if change.get("signal_id") != signal_row["signal_id"]:
                     continue
                 if row["window_id"] == target_window["id"] and change["t"] > t:

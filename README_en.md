@@ -471,7 +471,7 @@ Each row contains:
 
 Primary use:
 
-- locate the JSONL file for a chosen window quickly
+- locate the change shard for a chosen window quickly
 
 #### `signal_window_index.json`
 
@@ -490,7 +490,7 @@ Primary use:
 - answer whether a given signal changed in a given window
 - find the first and last change time for that signal within the window
 
-#### `changes/by_window/wN.jsonl`
+#### `changes/by_window/wN.tsv`
 
 Raw change shard for one window.
 
@@ -498,8 +498,12 @@ Each line contains:
 
 - `t`: simulation time
 - `signal_id`
-- `window_id`
 - `value`
+
+Notes:
+
+- `window_id` is implied by the shard filename `wN.tsv` instead of being repeated on every line
+- query helpers remain compatible with older `wN.jsonl` caches
 
 Primary use:
 

@@ -2,4 +2,10 @@ __pycache__/
 artifacts/
 *.pyc
 docs/superpowers
-tests
+tests/*
+!tests/fixtures/
+tests/fixtures/*
+!tests/test_compact_waveform_cache.py
+!tests/fixtures/simple.fst
+!tests/fixtures/simple.vcd
+tests/fixtures
