@@ -69,6 +69,41 @@ Primary use:
 
 ### Packet Artifacts
 
+### Direct Query Cache Artifacts
+
+#### `waveform_meta/<fingerprint>/`
+
+Level-1 cache for direct `wellen` queries.
+
+Contains:
+
+- `signals.json`
+- `scopes.json`
+- `scope_signal_index.json`
+- `cache_meta.json`
+
+Primary use:
+
+- avoid rebuilding waveform hierarchy metadata for repeated direct queries
+
+#### `waveform_query/<fingerprint>/`
+
+Level-2 cache for direct query results.
+
+Contains:
+
+- `result.json`
+- `cache_meta.json`
+
+`cache_meta.json` records the waveform file signature and the query key, such as:
+
+- signal path + simulation time for `query-signal-value`
+- window ID + window length + focus scope + authority identity for `query-packet`
+
+Primary use:
+
+- avoid reopening and requerying the waveform when the same direct query is repeated
+
 #### `packet.json`
 
 Compact debug packet for one query window.

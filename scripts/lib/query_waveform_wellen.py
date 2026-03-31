@@ -53,6 +53,10 @@ def _metadata_cache_root(metadata_cache_root: Path | None = None) -> Path:
     return metadata_cache_root or (ARTIFACTS_DIR / "waveform_meta")
 
 
+def _query_cache_root(query_cache_root: Path | None = None) -> Path:
+    return query_cache_root or (ARTIFACTS_DIR / "waveform_query")
+
+
 def _metadata_cache_meta(*, wave_path: Path) -> dict[str, Any]:
     return {
         "kind": "waveform_meta",
@@ -60,9 +64,38 @@ def _metadata_cache_meta(*, wave_path: Path) -> dict[str, Any]:
     }
 
 
+def _authority_cache_identity(
+    *,
+    authority: dict[str, Any] | None = None,
+    authority_rows: list[dict[str, Any]] | None = None,
+    authority_db: str | Path | None = None,
+) -> dict[str, Any] | None:
+    if authority_db is not None:
+        return {
+            "kind": "authority_db",
+            "authority_db": _file_signature(Path(authority_db)),
+        }
+    if authority_rows is not None:
+        return {
+            "kind": "authority_rows",
+            "sha256": _fingerprint({"rows": authority_rows}),
+        }
+    if authority is not None:
+        return {
+            "kind": "authority_object",
+            "sha256": _fingerprint({"authority": authority}),
+        }
+    return None
+
+
 def _metadata_cache_dir(*, wave_path: Path, metadata_cache_root: Path | None = None) -> Path:
     root = _metadata_cache_root(metadata_cache_root)
     return root / _fingerprint(_metadata_cache_meta(wave_path=wave_path))
+
+
+def _query_cache_dir(*, cache_key: dict[str, Any], query_cache_root: Path | None = None) -> Path:
+    root = _query_cache_root(query_cache_root)
+    return root / _fingerprint(cache_key)
 
 
 def _metadata_cache_paths(*, cache_dir: Path) -> dict[str, Path]:
@@ -70,6 +103,13 @@ def _metadata_cache_paths(*, cache_dir: Path) -> dict[str, Path]:
         "signals": cache_dir / "signals.json",
         "scopes": cache_dir / "scopes.json",
         "scope_signal_index": cache_dir / "scope_signal_index.json",
+        "cache_meta": cache_dir / "cache_meta.json",
+    }
+
+
+def _query_cache_paths(*, cache_dir: Path) -> dict[str, Path]:
+    return {
+        "result": cache_dir / "result.json",
         "cache_meta": cache_dir / "cache_meta.json",
     }
 
@@ -87,6 +127,17 @@ def _metadata_cache_matches(cache_dir: Path, expected: dict[str, Any]) -> bool:
     return existing == expected
 
 
+def _query_cache_matches(cache_dir: Path, expected: dict[str, Any]) -> bool:
+    paths = _query_cache_paths(cache_dir=cache_dir)
+    if not paths["cache_meta"].exists() or not paths["result"].exists():
+        return False
+    try:
+        existing = _load_json(paths["cache_meta"])
+    except json.JSONDecodeError:
+        return False
+    return existing == expected
+
+
 def _persist_metadata_cache(*, cache_dir: Path, cache_meta: dict[str, Any], signals: list[dict[str, Any]], scopes: list[dict[str, Any]]) -> None:
     paths = _metadata_cache_paths(cache_dir=cache_dir)
     _write_json(paths["signals"], signals)
@@ -95,9 +146,19 @@ def _persist_metadata_cache(*, cache_dir: Path, cache_meta: dict[str, Any], sign
     _write_json(paths["cache_meta"], cache_meta)
 
 
+def _persist_query_cache(*, cache_dir: Path, cache_meta: dict[str, Any], result: dict[str, Any]) -> None:
+    paths = _query_cache_paths(cache_dir=cache_dir)
+    _write_json(paths["cache_meta"], cache_meta)
+    _write_json(paths["result"], result)
+
+
 def _load_cached_metadata(cache_dir: Path) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     paths = _metadata_cache_paths(cache_dir=cache_dir)
     return _load_json(paths["signals"]), _load_json(paths["scopes"])
+
+
+def _load_cached_query_result(cache_dir: Path) -> dict[str, Any]:
+    return _load_json(_query_cache_paths(cache_dir=cache_dir)["result"])
 
 
 def _signal_lookup_from_rows(signals: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
@@ -170,6 +231,7 @@ def query_signal_value_from_waveform(
     window_len: int = 1000,
     pywellen_module: Any | None = None,
     metadata_cache_root: Path | None = None,
+    query_cache_root: Path | None = None,
 ) -> dict[str, Any]:
     if t < 0:
         raise ValueError("time must be >= 0")
@@ -177,6 +239,17 @@ def query_signal_value_from_waveform(
         raise ValueError("window_len must be >= 1")
 
     wave_path = Path(wave_path)
+    query_cache_meta = {
+        "kind": "signal_value_query",
+        "waveform": _file_signature(wave_path),
+        "full_wave_path": full_wave_path,
+        "t": t,
+        "window_len": window_len,
+    }
+    query_cache_dir = _query_cache_dir(cache_key=query_cache_meta, query_cache_root=query_cache_root)
+    if _query_cache_matches(query_cache_dir, query_cache_meta):
+        return _load_cached_query_result(query_cache_dir)
+
     waveform = _load_waveform(wave_path=wave_path, pywellen_module=pywellen_module)
     signals, _scopes, signal_by_full_path, _cache_dir = _load_or_build_metadata(
         waveform=waveform,
@@ -197,7 +270,7 @@ def query_signal_value_from_waveform(
         }
 
     window_idx = t // window_len
-    return {
+    result = {
         "version": "0.1",
         "query": {
             "full_wave_path": full_wave_path,
@@ -222,6 +295,8 @@ def query_signal_value_from_waveform(
             "status": "ok" if latest_change is not None else "uninitialized_before_time",
         },
     }
+    _persist_query_cache(cache_dir=query_cache_dir, cache_meta=query_cache_meta, result=result)
+    return result
 
 
 def build_debug_packet_from_waveform(
@@ -235,11 +310,28 @@ def build_debug_packet_from_waveform(
     authority_db: str | Path | None = None,
     pywellen_module: Any | None = None,
     metadata_cache_root: Path | None = None,
+    query_cache_root: Path | None = None,
 ) -> dict[str, Any]:
     if window_len < 1:
         raise ValueError("window_len must be >= 1")
 
     wave_path = Path(wave_path)
+    query_cache_meta = {
+        "kind": "packet_query",
+        "waveform": _file_signature(wave_path),
+        "window_id": window_id,
+        "window_len": window_len,
+        "focus_scope": focus_scope,
+        "authority": _authority_cache_identity(
+            authority=authority,
+            authority_rows=authority_rows,
+            authority_db=authority_db,
+        ),
+    }
+    query_cache_dir = _query_cache_dir(cache_key=query_cache_meta, query_cache_root=query_cache_root)
+    if _query_cache_matches(query_cache_dir, query_cache_meta):
+        return _load_cached_query_result(query_cache_dir)
+
     waveform = _load_waveform(wave_path=wave_path, pywellen_module=pywellen_module)
     signals, _scopes, signal_by_full_path, _cache_dir = _load_or_build_metadata(
         waveform=waveform,
@@ -304,13 +396,15 @@ def build_debug_packet_from_waveform(
         ],
         "changes": changes,
     }
-    return build_debug_packet(
+    result = build_debug_packet(
         store=store,
         authority_rows=authority_rows_resolved,
         window_id=window_id,
         focus_scope=focus_scope,
         scope_already_filtered=True,
     )
+    _persist_query_cache(cache_dir=query_cache_dir, cache_meta=query_cache_meta, result=result)
+    return result
 
 
 def load_authority_object(path: str | Path) -> dict[str, Any]:

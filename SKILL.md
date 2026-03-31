@@ -18,6 +18,11 @@ Core approach:
 - use Scala/Chisel source as the primary material for root-cause analysis
 - only inspect generated SystemVerilog if Scala-first analysis is blocked
 
+Direct `wellen` queries now use two cache levels:
+
+- level 1: waveform metadata cache
+- level 2: direct query-result cache for repeated packet and signal-value queries
+
 
 ## Workflow
 
@@ -160,6 +165,7 @@ Include only the few source files or artifact paths that materially support the 
 - Let `inspect-inputs` choose default artifact paths; only override when the user asks.
 - If direct `wellen` query fails, surface the error clearly and remind the user that `main` expects `pywellen`; recommend the `no-pywellen` branch only when they explicitly want to avoid that dependency.
 - Reuse cached artifacts; rebuild only when needed or explicitly requested.
+- Reuse both waveform metadata cache and direct query-result cache when available.
 - Treat `rtl_authority.sqlite3` matches as exact RTL ownership.
 - If no `build/rtl` is provided, label the result `waveform-only analysis`.
 - Avoid reading large SystemVerilog files unless Scala-first analysis is blocked.

@@ -4,7 +4,7 @@
 
 使用 `wellen` / `pywellen` 直接查询波形文件，结合 `build/rtl` 构建 chisel -> verilog 信号映射，从而让 LLM 更好地根据波形调试。
 > 当前 `main` 分支要求在正在使用的 Python 环境中安装 `pywellen`。如果你希望完全避免 `pywellen`，请切换到 `no-pywellen` 分支。
-> `no-pywellen` 查询速度更快，准确性上稍弱
+> `no-pywellen` 会构建更多的离线缓存，查询ge更快，准确性上稍弱
 
 ## 如何使用
 
@@ -62,6 +62,7 @@ $Hardware Debug Waveform explain this module with xxx.vcd/fst
 4. 生成的 packet 只保留当前分析时间窗中真正相关的信号变化，并可附带 exact RTL ownership。
 5. LLM 再根据 `module_type`、`local_signal_name`、`focus_scope` 等线索回到 Scala/Chisel 源码中做根因分析。
 6. 查询会复用 `artifacts/waveform_meta/` 下的元数据缓存。
+7. 重复执行 `query-packet --waveform` 与 `query-signal-value --waveform` 时，还会复用 `artifacts/waveform_query/` 下的第二级查询结果缓存。
 
 
 ## 详细分析
@@ -94,6 +95,7 @@ $Hardware Debug Waveform explain this module with xxx.vcd/fst
 - 可选关联 `--authority`
 - 可选使用 `--focus-scope` 缩小范围
 - 对大型 FST，直接 packet 查询可能较慢
+- 重复的直接 packet 查询会复用第二级查询缓存
 
 #### `query-signal-value`
 
@@ -101,6 +103,7 @@ $Hardware Debug Waveform explain this module with xxx.vcd/fst
 
 - 输入模式：`--waveform`
 - 返回目标时刻所在窗口，以及该时刻之前最近一次已知变更
+- 重复的直接点查询会复用第二级查询缓存
 
 #### `rough-map-chisel`
 
@@ -121,6 +124,7 @@ $Hardware Debug Waveform explain this module with xxx.vcd/fst
 hardware-debug-waveform/artifacts/
 ├── authority/<fingerprint>/
 ├── waveform_meta/<fingerprint>/
+├── waveform_query/<fingerprint>/
 └── packets/<fingerprint>/
 ```
 
@@ -128,6 +132,7 @@ hardware-debug-waveform/artifacts/
 
 - `authority/`：`build-authority` 的缓存输出
 - `waveform_meta/`：直接 `--waveform` 查询路径的元数据缓存
+- `waveform_query/`：直接 `query-packet --waveform` 与 `query-signal-value --waveform` 的第二级查询结果缓存
 - `packets/`：CLI 推荐的 packet 默认输出位置
 
 `<fingerprint>` 基于输入文件签名与关键参数生成，因此相同输入通常会复用同一缓存目录。

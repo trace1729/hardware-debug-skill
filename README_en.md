@@ -69,6 +69,7 @@ Common optional inputs:
 4. The generated packet keeps only the relevant changes for the selected window and can attach exact RTL ownership.
 5. The LLM then uses `module_type`, `local_signal_name`, and `focus_scope` to locate the relevant Scala/Chisel source.
 6. The direct query path reuses metadata cached under `artifacts/waveform_meta/`.
+7. Repeated direct `query-packet --waveform` and `query-signal-value --waveform` calls also reuse a second-level query-result cache under `artifacts/waveform_query/`.
 
 For FST input, only the direct `--waveform` path should be used.
 
@@ -102,6 +103,7 @@ Builds one debug packet for one time window.
 - optional `--authority` join
 - optional `--focus-scope` narrowing
 - direct packet queries on very large FST files may be slow
+- repeated direct packet queries reuse a second-level query cache
 
 #### `query-signal-value`
 
@@ -109,6 +111,7 @@ Queries one signal at one simulation time.
 
 - preferred mode: `--waveform`
 - returns the containing window and the most recent known change at or before the query time
+- repeated direct signal-value queries reuse a second-level query cache
 
 #### `rough-map-chisel`
 
@@ -129,6 +132,7 @@ Default outputs are stored under:
 hardware-debug-waveform/artifacts/
 ├── authority/<fingerprint>/
 ├── waveform_meta/<fingerprint>/
+├── waveform_query/<fingerprint>/
 └── packets/<fingerprint>/
 ```
 
@@ -136,6 +140,7 @@ Meaning:
 
 - `authority/`: cache output from `build-authority`
 - `waveform_meta/`: metadata cache used by direct `--waveform` queries
+- `waveform_query/`: second-level cache for direct `query-packet --waveform` and `query-signal-value --waveform` results
 - `packets/`: default packet output location suggested by the CLI
 
 `<fingerprint>` is derived from file signatures and key options, so identical inputs usually reuse the same cache directory.
