@@ -49,8 +49,7 @@ python scripts/hw_debug_cli.py inspect-inputs \
   [--rtl-root /path/to/build/rtl] \
   [--focus-scope TOP.SimTop.core.rob] \
   [--suggestion "hang near rob tail"] \
-  [--top SimTop] \
-  [--window-len 1000]
+  [--top SimTop]
 ```
 
 `inspect-inputs` validates paths, reports artifact sizes, checks cache status, and **prints the exact commands to run next**. Use those printed commands as the next steps.
@@ -68,13 +67,12 @@ python scripts/hw_debug_cli.py build-authority \
 
 Reuses cache automatically. Add `--force` to rebuild.
 
-### Step 3 — Build waveform DB
+### Step 3 — Build waveform metadata cache
 
 ```bash
-python scripts/hw_debug_cli.py build-wave-db \
+python scripts/hw_debug_cli.py build-wave-meta \
   --waveform /path/to/run.fst \
-  --window-len 1000 \
-  [--out-dir <wave-out>]
+  [--out-dir <meta-out>]
 ```
 
 Reuses cache automatically. Add `--force` to rebuild.
@@ -85,22 +83,25 @@ Reuses cache automatically. Add `--force` to rebuild.
 
 ```bash
 python scripts/hw_debug_cli.py query-packet \
-  --manifest <wave-out>/manifest.json \
-  --window-id w42 \
-  --out <packet-out>/packet_w42.json \
+  --waveform /path/to/run.fst \
+  --focus-scope TOP.SimTop.core.rob \
+  --t-start 123000 \
+  --t-end 124000 \
+  --out <packet-out>/packet_t123000_124000.json \
+  [--meta-dir <meta-out>] \
   [--authority <authority-out>/rtl_authority.sqlite3] \
-  [--focus-scope TOP.SimTop.core.rob]
 ```
 
-Use the window ID that covers the suspected failure. Check `windows.json` to find active windows if unsure.
+Choose `t-start` and `t-end` to cover the suspected failure region. Use a narrower range when you want a compact packet for LLM analysis.
 
 ### Step 4b — (Optional) Query one signal value at one time
 
 ```bash
 python scripts/hw_debug_cli.py query-signal-value \
-  --manifest <wave-out>/manifest.json \
+  --waveform /path/to/run.fst \
   --signal TOP.SimTop.core.rob.commit_valid \
-  --time 123456
+  --time 123456 \
+  [--meta-dir <meta-out>]
 ```
 
 Use this when you need the value of one specific signal at one specific simulation time.
@@ -109,9 +110,9 @@ Use this when you need the value of one specific signal at one specific simulati
 
 ```bash
 python scripts/hw_debug_cli.py rough-map-chisel \
-  --packet <packet-out>/packet_w42.json \
+  --packet <packet-out>/packet_t123000_124000.json \
   --mapping /path/to/rough-mapping.json \
-  --out <packet-out>/packet_w42_rough.json
+  --out <packet-out>/packet_t123000_124000_rough.json
 ```
 
 Only run this step if a rough mapping artifact is available. Treat results as guesses, not exact source truth.
@@ -125,7 +126,7 @@ Only run this step if a rough mapping artifact is available. Treat results as gu
 5. Present rough Chisel candidates from step 5 only as secondary, lower-confidence hints.
 6. Only inspect generated SystemVerilog if Scala cannot explain the behavior.
 
-If you need a point lookup instead of a window summary, use `query-signal-value`.
+If you need a point lookup instead of a time-range packet, use `query-signal-value`.
 
 
 ## Output

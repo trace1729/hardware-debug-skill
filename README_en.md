@@ -2,7 +2,7 @@
 
 ## Summary
 
-This skill is a portable hardware-debug workflow for large waveform dumps (`.vcd` or `.fst`): it validates inputs, builds an exact RTL authority table from emitted RTL when available, converts the waveform into a queryable database, and generates compact debug packets that bundle waveform evidence with hierarchy and ownership hints.
+This skill is a portable hardware-debug workflow for large waveform dumps (`.vcd` or `.fst`): it validates inputs, builds an exact RTL authority table from emitted RTL when available, builds a lightweight waveform metadata cache, and generates compact debug packets that bundle waveform evidence with hierarchy and ownership hints.
 
 ## How to use
 
@@ -35,8 +35,6 @@ Optional inputs:
 - `--focus-scope`: a waveform hierarchy scope to narrow analysis
 - `--suggestion`: a human hint such as `hang near dispatch` or `wrong commit behavior`
 - `--top`: RTL top module name, default `SimTop`
-- `--window-len`: window size for waveform preprocessing, default `1000`
-
 Compatibility note:
 
 - `--vcd` still works as an alias for `--waveform`
@@ -50,7 +48,7 @@ By default, this skill stores outputs under the skill root:
 ```text
 hardware-debug-waveform/artifacts/
 ├── authority/<fingerprint>/
-├── wave_db/<fingerprint>/
+├── wave_meta/<fingerprint>/
 └── packets/<fingerprint>/
 ```
 
@@ -59,7 +57,7 @@ The `<fingerprint>` is derived from the input files and key options.
 For example:
 
 - authority cache key uses the RTL tree signature and `--top`
-- waveform DB cache key uses the waveform file signature and `--window-len`
+- waveform metadata cache key uses the waveform file signature
 
 You can still override the location explicitly with `--out-dir` or `--out`.
 
@@ -109,30 +107,6 @@ Important role:
 - it is not the preferred source for human or LLM reasoning
 - after ownership is known, analysis should move to the relevant Scala/Chisel code first
 
-### `build-wave-db`
-
-Builds a canonical waveform database from the waveform file.
-
-Basic function:
-
-- parses VCD metadata directly for `.vcd`
-- parses FST hierarchy and value changes directly for `.fst`
-- streams value changes into time windows
-- materializes metadata and query indexes on disk
-
-Example:
-
-```bash
-python scripts/hw_debug_cli.py build-wave-db \
-  --waveform /path/to/run.fst \
-  --window-len 1000
-```
-
-Cache behavior:
-
-- if a matching cached waveform DB already exists, the command reuses it instead of rebuilding
-- add `--force` to rebuild anyway
-
 ### `build-wave-meta`
 
 Builds a lightweight waveform metadata cache without materializing full per-window change shards.
@@ -153,15 +127,15 @@ python scripts/hw_debug_cli.py build-wave-meta \
 When to prefer it:
 
 - point lookups such as "what is this signal at time `t`?"
-- targeted direct queries where full wave DB build would be wasteful
+- targeted direct queries where full waveform preprocessing would be wasteful
 
 ### `query-packet`
 
-Builds a compact debug packet for one waveform window.
+Builds a compact debug packet for one time range.
 
 Basic function:
 
-- loads waveform metadata and changes for one window
+- loads waveform metadata and waveform changes for one requested time range
 - optionally joins exact RTL ownership from an authority database
 - emits a compact packet suitable for LLM analysis
 
@@ -169,10 +143,11 @@ Example with exact RTL:
 
 ```bash
 python scripts/hw_debug_cli.py query-packet \
-  --manifest /tmp/hw_wave_db/manifest.json \
+  --waveform /path/to/run.fst \
   --authority /tmp/hw_debug_rtl_authority/rtl_authority.sqlite3 \
-  --window-id w42 \
   --focus-scope TOP.SimTop.core.rob \
+  --t-start 123000 \
+  --t-end 124000 \
   --out /tmp/hw_packet.json
 ```
 
@@ -180,8 +155,9 @@ Example in waveform-only mode:
 
 ```bash
 python scripts/hw_debug_cli.py query-packet \
-  --manifest /tmp/hw_wave_db/manifest.json \
-  --window-id w42 \
+  --waveform /path/to/run.fst \
+  --t-start 123000 \
+  --t-end 124000 \
   --out /tmp/hw_packet.json
 ```
 
@@ -199,7 +175,7 @@ python scripts/hw_debug_cli.py query-packet \
 When to prefer it:
 
 - targeted packet extraction over one suspicious time range
-- cases where full wave DB build is too expensive relative to the number of queries
+- cases where full waveform preprocessing is too expensive relative to the number of queries
 
 ### `query-signal-value`
 
@@ -207,21 +183,11 @@ Queries one signal's value at one simulation time.
 
 Basic function:
 
-- resolves the signal from waveform metadata
-- finds the window containing the requested time
-- walks backward to the most recent change at or before that time
+- resolves the signal handle from waveform metadata
+- asks the FST reader for the value at the requested time
 - returns the value if known
 
 Example:
-
-```bash
-python scripts/hw_debug_cli.py query-signal-value \
-  --manifest /tmp/hw_wave_db/manifest.json \
-  --signal TOP.SimTop.core.rob.commit_valid \
-  --time 123456
-```
-
-Direct FST example with lightweight metadata cache:
 
 ```bash
 python scripts/hw_debug_cli.py query-signal-value \
@@ -283,25 +249,24 @@ How to use that output:
 - then search the relevant Scala/Chisel source first
 - avoid diving into generated SystemVerilog unless Scala leaves an important gap
 
-### Phase 2: VCD Preprocessing
+### Phase 2: Waveform Metadata Cache
 
-This phase is the canonical waveform ingestion stage.
+This phase is the lightweight waveform indexing stage.
 
 General flow:
 
-1. Parse the VCD header to collect scopes and traced signals.
+1. Parse waveform hierarchy and traced signals.
 2. Assign stable internal IDs such as `sigN` and `scopeN`.
-3. Stream all value changes from the VCD body.
-4. Partition changes into fixed time windows such as `w0`, `w1`, `w2`.
-5. Build metadata files and indexes for quick lookup.
+3. Record `full_wave_path -> source_id` for direct FST lookup.
+4. Build compact metadata files and indexes for quick signal and scope lookup.
 
 What this phase gives you:
 
-- full signal inventory from the VCD header
+- full signal inventory
 - full scope inventory
 - queryable signal metadata
-- per-window value changes
-- per-signal/per-window activity summaries
+- a reusable mapping from waveform path to FST handle
+- much lower setup cost than full waveform materialization
 
 ### Phase 3: Packet Generation
 
@@ -309,16 +274,16 @@ This phase packages only the evidence needed for one debug slice.
 
 General flow:
 
-1. Select one window, for example `w42`.
-2. Load the change shard for that window.
-3. Optionally narrow to `--focus-scope`.
+1. Select one suspicious time range.
+2. Resolve the signals for that scope from cached metadata.
+3. Read only the requested handles directly from the FST within that time range.
 4. Join exact RTL ownership if an authority database is available.
 5. Emit a compact JSON packet for LLM consumption.
 
 What this phase gives you:
 
 - time range summary
-- touched signals in the selected window
+- touched signals in the selected time range
 - exact RTL ownership where available
 - unresolved signals where ownership could not be proven
 
@@ -490,77 +455,21 @@ Primary use:
 
 - query signal metadata by scope or signal path without loading large JSON files
 
-#### `windows.json`
+#### Direct Range Query Behavior
 
-Summary of each time window.
-
-Each row contains:
-
-- `id`: window ID such as `w42`
-- `t_start`
-- `t_end`
-- `change_count`
-- `active_signal_count`
+In the hybrid path, waveform changes are not pre-expanded into on-disk time windows.
 
 Primary use:
 
-- identify active or interesting windows before opening full change shards
-
-#### `window_index.json`
-
-Maps each window to its on-disk change shard.
-
-Each row contains:
-
-- `window_id`
-- `path`
-- `change_count`
-
-Primary use:
-
-- locate the change shard for a chosen window quickly
-
-#### `signal_window_index.json`
-
-Per-signal/per-window summary index.
-
-Each row contains:
-
-- `signal_id`
-- `window_id`
-- `first_t`
-- `last_t`
-- `change_count`
-
-Primary use:
-
-- answer whether a given signal changed in a given window
-- find the first and last change time for that signal within the window
-
-#### `changes/by_window/wN.tsv`
-
-Raw change shard for one window.
-
-Each line contains:
-
-- `t`: simulation time
-- `signal_id`
-- `value`
-
-Notes:
-
-- `window_id` is implied by the shard filename `wN.tsv` instead of being repeated on every line
-- query helpers remain compatible with older `wN.jsonl` caches
-
-Primary use:
-
-- reconstruct detailed waveform activity for that time slice
+- resolve metadata once
+- read only the requested signals for the requested time range
+- avoid materializing large intermediate change shards when only a few focused queries are needed
 
 ### Packet Artifacts
 
 #### `packet.json`
 
-Compact debug packet for one query window.
+Compact debug packet for one query time range.
 
 Top-level structure:
 
@@ -572,8 +481,9 @@ Top-level structure:
 
 `query` contains:
 
-- `window_id`
 - `focus_scope`
+- `t_start`
+- `t_end`
 
 `window_summary` contains:
 
@@ -594,7 +504,6 @@ Each row in `changes` contains:
 
 - `t`
 - `signal_id`
-- `window_id`
 - `value`
 
 `rtl` is either:
@@ -708,15 +617,17 @@ python scripts/hw_debug_cli.py build-authority \
   --top SimTop \
   --out-dir /tmp/hw_debug_rtl_authority
 
-python scripts/hw_debug_cli.py build-wave-db \
+python scripts/hw_debug_cli.py build-wave-meta \
   --vcd /proj/run.vcd \
-  --out-dir /tmp/hw_wave_db \
-  --window-len 1000
+  --out-dir /tmp/hw_wave_meta
 
 python scripts/hw_debug_cli.py query-packet \
-  --manifest /tmp/hw_wave_db/manifest.json \
+  --waveform /proj/run.vcd \
   --authority /tmp/hw_debug_rtl_authority/rtl_authority.sqlite3 \
-  --window-id w42 \
+  --meta-dir /tmp/hw_wave_meta \
+  --focus-scope TOP.SimTop.core.rob \
+  --t-start 123000 \
+  --t-end 124000 \
   --out /tmp/hw_packet.json
 ```
 

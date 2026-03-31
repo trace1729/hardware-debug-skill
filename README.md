@@ -2,7 +2,7 @@
 
 ## 总结
 
-基于波形文件（`.vcd` 或 `.fst`）构建层次化的数据文件，基于build/rtl 构建 chisel -> verilog 信号映射，从而让LLM更好的根据波形调试。
+基于波形文件（`.vcd` 或 `.fst`）构建轻量级层次化 metadata，基于 build/rtl 构建 chisel -> verilog 信号映射，并直接从波形中抽取目标时间段证据，从而让 LLM 更好地根据波形调试。
 
 > fst 目前构建缓存较慢，效果比较差，待更新
 
@@ -36,8 +36,6 @@ $Hardware Debug Waveform explain the module with xxx.vcd
 - `--focus-scope`：指定要聚焦的波形层级 scope
 - `--suggestion`：人工提供的调试提示，比如 `hang near dispatch`
 - `--top`：RTL 顶层模块名，默认 `SimTop`
-- `--window-len`：波形切窗长度，默认 `1000`
-
 兼容性说明：
 
 - `--vcd` 仍然保留，作为 `--waveform` 的兼容别名
@@ -50,7 +48,7 @@ $Hardware Debug Waveform explain the module with xxx.vcd
 ```text
 hardware-debug-waveform/artifacts/
 ├── authority/<fingerprint>/
-├── wave_db/<fingerprint>/
+├── wave_meta/<fingerprint>/
 └── packets/<fingerprint>/
 ```
 
@@ -59,7 +57,7 @@ hardware-debug-waveform/artifacts/
 例如：
 
 - authority 的 cache key 取决于 RTL 树签名和 `--top`
-- waveform DB 的 cache key 取决于波形文件签名和 `--window-len`
+- waveform metadata 的 cache key 取决于波形文件签名
 
 如果需要，你仍然可以通过 `--out-dir` 或 `--out` 显式改写输出位置。
 
@@ -109,30 +107,6 @@ python scripts/hw_debug_cli.py build-authority \
 - 不是人或 LLM 首选的推理阅读材料
 - 一旦定位到 ownership，后续分析应优先转到相关 Scala/Chisel 源码
 
-### `build-wave-db`
-
-把波形文件转成规范化的波形数据库。
-
-基础功能：
-
-- 对 `.vcd` 直接解析 VCD header
-- 对 `.fst` 直接解析 FST 层级和 value change
-- 流式读取 value change
-- 按时间窗口落盘成可查询的索引和数据分片
-
-示例：
-
-```bash
-python scripts/hw_debug_cli.py build-wave-db \
-  --waveform /path/to/run.fst \
-  --window-len 1000
-```
-
-缓存行为：
-
-- 如果已经存在匹配的 waveform DB artifact，就直接复用，不再重建
-- 如果你想强制重建，增加 `--force`
-
 ### `build-wave-meta`
 
 构建轻量级的 waveform metadata cache，而不是把全部 value change 预先落成完整的分窗数据库。
@@ -153,15 +127,15 @@ python scripts/hw_debug_cli.py build-wave-meta \
 适用场景：
 
 - 点查询，例如“这个信号在时刻 `t` 的值是什么？”
-- 只做少量目标查询，不值得先构建完整 wave DB 的场景
+- 只做少量目标查询，不值得先做完整波形预处理的场景
 
 ### `query-packet`
 
-针对一个时间窗口生成紧凑的 debug packet。
+针对一个时间范围生成紧凑的 debug packet。
 
 基础功能：
 
-- 读取一个窗口对应的波形变化
+- 读取一个指定时间范围内的波形变化
 - 可选地关联 exact RTL authority
 - 生成适合给 LLM 消费的紧凑 JSON 包
 
@@ -169,10 +143,11 @@ python scripts/hw_debug_cli.py build-wave-meta \
 
 ```bash
 python scripts/hw_debug_cli.py query-packet \
-  --manifest /tmp/hw_wave_db/manifest.json \
+  --waveform /path/to/run.fst \
   --authority /tmp/hw_debug_rtl_authority/rtl_authority.sqlite3 \
-  --window-id w42 \
   --focus-scope TOP.SimTop.core.rob \
+  --t-start 123000 \
+  --t-end 124000 \
   --out /tmp/hw_packet.json
 ```
 
@@ -180,8 +155,9 @@ waveform-only 模式示例：
 
 ```bash
 python scripts/hw_debug_cli.py query-packet \
-  --manifest /tmp/hw_wave_db/manifest.json \
-  --window-id w42 \
+  --waveform /path/to/run.fst \
+  --t-start 123000 \
+  --t-end 124000 \
   --out /tmp/hw_packet.json
 ```
 
@@ -199,7 +175,7 @@ python scripts/hw_debug_cli.py query-packet \
 适用场景：
 
 - 只想针对一个可疑时间段抽取 packet
-- 完整 build wave DB 成本太高，而查询次数并不多
+- 完整波形预处理成本太高，而查询次数并不多
 
 ### `query-signal-value`
 
@@ -207,21 +183,11 @@ python scripts/hw_debug_cli.py query-packet \
 
 基础功能：
 
-- 先从 waveform metadata 解析目标信号
-- 找到包含该时刻的窗口
-- 向前回溯到该时刻及之前最近一次变更
+- 从 waveform metadata 中解析目标信号对应的 handle
+- 直接向 FST 读取器查询该时刻的值
 - 返回该时刻可确定的值
 
 示例：
-
-```bash
-python scripts/hw_debug_cli.py query-signal-value \
-  --manifest /tmp/hw_wave_db/manifest.json \
-  --signal TOP.SimTop.core.rob.commit_valid \
-  --time 123456
-```
-
-基于轻量 metadata cache 的直接 FST 查询示例：
 
 ```bash
 python scripts/hw_debug_cli.py query-signal-value \
@@ -283,42 +249,41 @@ python scripts/hw_debug_cli.py rough-map-chisel \
 - 然后优先去搜索相关 Scala/Chisel 源码
 - 只有当 Scala 仍然解释不清时，再去阅读 generated SystemVerilog
 
-### 阶段二：VCD 预处理
+### 阶段二：Waveform Metadata Cache
 
-这一阶段是规范化波形存储的核心。
+这一阶段是轻量级波形索引的核心。
 
 总体流程：
 
-1. 解析 VCD header，收集 scope 和 traced signal。
+1. 解析波形中的 hierarchy 和 traced signal。
 2. 为每个对象分配稳定内部 ID，比如 `sigN`、`scopeN`。
-3. 流式遍历 VCD body 中所有 value change。
-4. 按固定时间窗口切分，例如 `w0`、`w1`、`w2`。
-5. 建立后续快速查询所需的 metadata 和 index。
+3. 记录 `full_wave_path -> source_id` 映射，供直接 FST 查询使用。
+4. 建立后续快速查询所需的 metadata 和 index。
 
 这一阶段产出的价值：
 
-- VCD header 中所有信号的完整清单
-- 完整的 scope 清单
+- 完整信号清单
+- 完整 scope 清单
 - 可查询的信号元数据
-- 按窗口组织的 value change
-- 每个信号在每个窗口中的活动摘要
+- 可复用的 waveform path 到 FST handle 映射
+- 比完整波形物化更低的准备成本
 
 ### 阶段三：Packet 生成
 
-这一阶段把一个时间片所需的证据压缩成 LLM 友好的形式。
+这一阶段把一个时间段所需的证据压缩成 LLM 友好的形式。
 
 总体流程：
 
-1. 选择一个窗口，比如 `w42`。
-2. 读取该窗口对应的 change shard。
-3. 可选地用 `--focus-scope` 缩小范围。
+1. 选择一个可疑时间范围。
+2. 从缓存 metadata 中解析该 scope 下的信号。
+3. 只对目标 handles 在该时间范围内做直接波形读取。
 4. 如果 authority 数据库存在，就 join exact RTL ownership。
 5. 输出一个适合 LLM 分析的紧凑 JSON packet。
 
 这一阶段产出的价值：
 
 - 时间范围摘要
-- 当前窗口真正发生变化的信号
+- 当前时间范围真正发生变化的信号
 - 若可用则附带 exact RTL ownership
 - 若无法证明 ownership，则明确标记 unresolved
 
@@ -490,77 +455,21 @@ python scripts/hw_debug_cli.py rough-map-chisel \
 
 - 按 scope 或 signal path 查询元数据，而不必一次性加载较大的 JSON
 
-#### `windows.json`
+#### 直接时间范围查询
 
-这是每个时间窗口的摘要。
-
-每条记录包含：
-
-- `id`：窗口 ID，例如 `w42`
-- `t_start`
-- `t_end`
-- `change_count`
-- `active_signal_count`
+在 hybrid 路径里，波形变化不会预先展开成按窗口落盘的中间文件。
 
 主要用途：
 
-- 在打开具体 change shard 前，先找活跃或可疑的窗口
-
-#### `window_index.json`
-
-这是窗口到磁盘分片文件的映射。
-
-每条记录包含：
-
-- `window_id`
-- `path`
-- `change_count`
-
-主要用途：
-
-- 快速定位某个窗口对应的 change 数据分片
-
-#### `signal_window_index.json`
-
-这是按“信号-窗口”组织的摘要索引。
-
-每条记录包含：
-
-- `signal_id`
-- `window_id`
-- `first_t`
-- `last_t`
-- `change_count`
-
-主要用途：
-
-- 判断某个 signal 是否在某个窗口发生变化
-- 查看该 signal 在该窗口中的第一次和最后一次变化时间
-
-#### `changes/by_window/wN.tsv`
-
-这是某一个窗口对应的原始 change shard。
-
-每一行包含：
-
-- `t`：仿真时间
-- `signal_id`
-- `value`
-
-说明：
-
-- `window_id` 不再在每行重复存储，而是由文件名 `wN.tsv` 隐含表示
-- 查询逻辑仍兼容旧的 `wN.jsonl` cache
-
-主要用途：
-
-- 重建这一时间片内更细粒度的波形活动
+- 先复用 metadata cache
+- 然后只读取目标信号、目标时间范围内的变化
+- 在只需要少量聚焦查询时，避免生成很大的中间 change shard
 
 ### Packet 相关 Artifact
 
 #### `packet.json`
 
-这是单次查询生成的紧凑 debug packet。
+这是单次时间范围查询生成的紧凑 debug packet。
 
 顶层结构：
 
@@ -572,8 +481,9 @@ python scripts/hw_debug_cli.py rough-map-chisel \
 
 `query` 包含：
 
-- `window_id`
 - `focus_scope`
+- `t_start`
+- `t_end`
 
 `window_summary` 包含：
 
@@ -594,7 +504,6 @@ python scripts/hw_debug_cli.py rough-map-chisel \
 
 - `t`
 - `signal_id`
-- `window_id`
 - `value`
 
 `rtl` 有两种情况：
@@ -708,15 +617,17 @@ python scripts/hw_debug_cli.py build-authority \
   --top SimTop \
   --out-dir /tmp/hw_debug_rtl_authority
 
-python scripts/hw_debug_cli.py build-wave-db \
+python scripts/hw_debug_cli.py build-wave-meta \
   --vcd /proj/run.vcd \
-  --out-dir /tmp/hw_wave_db \
-  --window-len 1000
+  --out-dir /tmp/hw_wave_meta
 
 python scripts/hw_debug_cli.py query-packet \
-  --manifest /tmp/hw_wave_db/manifest.json \
+  --waveform /proj/run.vcd \
   --authority /tmp/hw_debug_rtl_authority/rtl_authority.sqlite3 \
-  --window-id w42 \
+  --meta-dir /tmp/hw_wave_meta \
+  --focus-scope TOP.SimTop.core.rob \
+  --t-start 123000 \
+  --t-end 124000 \
   --out /tmp/hw_packet.json
 ```
 
