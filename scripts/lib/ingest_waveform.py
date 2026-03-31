@@ -105,15 +105,16 @@ def _write_signal_metadata_sqlite(path: Path, signals: list[dict[str, Any]], sco
                 full_wave_path text,
                 local_name text,
                 bit_width integer,
-                value_kind text
+                value_kind text,
+                source_id text
             )
             """
         )
         conn.executemany(
             """
             insert into signal_metadata(
-                signal_id, scope_id, full_scope_path, full_wave_path, local_name, bit_width, value_kind
-            ) values (?, ?, ?, ?, ?, ?, ?)
+                signal_id, scope_id, full_scope_path, full_wave_path, local_name, bit_width, value_kind, source_id
+            ) values (?, ?, ?, ?, ?, ?, ?, ?)
             """,
             [
                 (
@@ -124,6 +125,7 @@ def _write_signal_metadata_sqlite(path: Path, signals: list[dict[str, Any]], sco
                     signal["local_name"],
                     signal["bit_width"],
                     signal["value_kind"],
+                    signal.get("source_id"),
                 )
                 for signal in signals
             ],

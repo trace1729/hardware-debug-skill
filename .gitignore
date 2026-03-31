@@ -6,7 +6,8 @@ docs/superpowers
 tests/*
 !tests/fixtures/
 tests/fixtures/*
+!tests/__init__.py
 !tests/test_compact_waveform_cache.py
+!tests/test_direct_fst_query.py
 !tests/fixtures/simple.fst
 !tests/fixtures/simple.vcd
-tests/fixtures

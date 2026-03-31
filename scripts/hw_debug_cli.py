@@ -17,7 +17,9 @@ if str(SCRIPT_DIR) not in sys.path:
 
 from lib.build_debug_packet import build_debug_packet_from_manifest, query_signal_value_from_manifest
 from lib.build_rtl_authority import build_rtl_authority
+from lib.direct_fst_query import build_debug_packet_from_fst, query_signal_value_from_fst
 from lib.ingest_waveform import stream_waveform_store
+from lib.wave_metadata_cache import build_wave_metadata_cache
 from lib.waveform_formats import detect_waveform_format
 
 
@@ -110,6 +112,16 @@ def _wave_cache_meta(*, vcd: Path, window_len: int) -> dict[str, Any]:
     }
 
 
+def _wave_meta_cache_meta(*, waveform: Path) -> dict[str, Any]:
+    return {
+        "kind": "wave_meta",
+        "waveform": {
+            "format": detect_waveform_format(waveform),
+            "file": _file_signature(waveform),
+        },
+    }
+
+
 def _default_authority_out(*, rtl_root: Path, top: str) -> Path:
     meta = _authority_cache_meta(rtl_root=rtl_root, top=top)
     return ARTIFACTS_DIR / "authority" / _fingerprint(meta)
@@ -118,6 +130,11 @@ def _default_authority_out(*, rtl_root: Path, top: str) -> Path:
 def _default_wave_out(*, vcd: Path, window_len: int) -> Path:
     meta = _wave_cache_meta(vcd=vcd, window_len=window_len)
     return ARTIFACTS_DIR / "wave_db" / _fingerprint(meta)
+
+
+def _default_wave_meta_out(*, waveform: Path) -> Path:
+    meta = _wave_meta_cache_meta(waveform=waveform)
+    return ARTIFACTS_DIR / "wave_meta" / _fingerprint(meta)
 
 
 def _default_packet_out(*, wave_out: Path, window_id: str) -> Path:
@@ -292,29 +309,86 @@ def _cmd_build_wave_db(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_build_wave_meta(args: argparse.Namespace) -> int:
+    waveform = _resolve_waveform_arg(args)
+    out_dir = args.out_dir or _default_wave_meta_out(waveform=waveform)
+    cache_meta = _wave_meta_cache_meta(waveform=waveform)
+    if not args.force and _cache_matches(
+        out_dir,
+        cache_meta,
+        ["manifest.json", "signal_metadata.sqlite3", "signals.json", "scopes.json"],
+    ):
+        print(f"cache hit: reusing waveform metadata at {out_dir}")
+        return 0
+    build_wave_metadata_cache(waveform_path=waveform, out_dir=out_dir)
+    _store_cache_meta(out_dir, cache_meta)
+    print(f"built waveform metadata at {out_dir}")
+    return 0
+
+
 def _cmd_query_packet(args: argparse.Namespace) -> int:
-    manifest = json.loads(args.manifest.read_text(encoding="utf-8"))
-    if args.authority is None:
-        packet = build_debug_packet_from_manifest(
-            manifest=manifest,
-            window_id=args.window_id,
-            focus_scope=args.focus_scope,
-        )
-    elif args.authority.suffix == ".sqlite3":
-        packet = build_debug_packet_from_manifest(
-            manifest=manifest,
-            authority_db=args.authority,
-            window_id=args.window_id,
-            focus_scope=args.focus_scope,
-        )
+    waveform = getattr(args, "waveform", None) or getattr(args, "vcd", None)
+    if args.manifest is not None and waveform is not None:
+        raise SystemExit("provide either --manifest or --waveform/--vcd, not both")
+    if args.manifest is None and waveform is None:
+        raise SystemExit("one of --manifest or --waveform/--vcd is required")
+
+    if args.manifest is not None:
+        if args.window_id is None:
+            raise SystemExit("--window-id is required when using --manifest")
+        manifest = json.loads(args.manifest.read_text(encoding="utf-8"))
+        if args.authority is None:
+            packet = build_debug_packet_from_manifest(
+                manifest=manifest,
+                window_id=args.window_id,
+                focus_scope=args.focus_scope,
+            )
+        elif args.authority.suffix == ".sqlite3":
+            packet = build_debug_packet_from_manifest(
+                manifest=manifest,
+                authority_db=args.authority,
+                window_id=args.window_id,
+                focus_scope=args.focus_scope,
+            )
+        else:
+            authority = json.loads(args.authority.read_text(encoding="utf-8"))
+            packet = build_debug_packet_from_manifest(
+                manifest=manifest,
+                authority=authority,
+                window_id=args.window_id,
+                focus_scope=args.focus_scope,
+            )
     else:
-        authority = json.loads(args.authority.read_text(encoding="utf-8"))
-        packet = build_debug_packet_from_manifest(
-            manifest=manifest,
-            authority=authority,
-            window_id=args.window_id,
-            focus_scope=args.focus_scope,
-        )
+        if args.t_start is None or args.t_end is None:
+            raise SystemExit("--t-start and --t-end are required when using --waveform/--vcd")
+        waveform_path = _resolve_waveform_arg(args)
+        if args.authority is None:
+            packet = build_debug_packet_from_fst(
+                waveform_path=waveform_path,
+                t_start=args.t_start,
+                t_end=args.t_end,
+                meta_out_dir=args.meta_dir or _default_wave_meta_out(waveform=waveform_path),
+                focus_scope=args.focus_scope,
+            )
+        elif args.authority.suffix == ".sqlite3":
+            packet = build_debug_packet_from_fst(
+                waveform_path=waveform_path,
+                authority_db=args.authority,
+                t_start=args.t_start,
+                t_end=args.t_end,
+                meta_out_dir=args.meta_dir or _default_wave_meta_out(waveform=waveform_path),
+                focus_scope=args.focus_scope,
+            )
+        else:
+            authority = json.loads(args.authority.read_text(encoding="utf-8"))
+            packet = build_debug_packet_from_fst(
+                waveform_path=waveform_path,
+                authority=authority,
+                t_start=args.t_start,
+                t_end=args.t_end,
+                meta_out_dir=args.meta_dir or _default_wave_meta_out(waveform=waveform_path),
+                focus_scope=args.focus_scope,
+            )
     args.out.parent.mkdir(parents=True, exist_ok=True)
     args.out.write_text(json.dumps(packet, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     return 0
@@ -365,12 +439,26 @@ def _cmd_rough_map_chisel(args: argparse.Namespace) -> int:
 
 
 def _cmd_query_signal_value(args: argparse.Namespace) -> int:
-    manifest = json.loads(args.manifest.read_text(encoding="utf-8"))
-    value_info = query_signal_value_from_manifest(
-        manifest=manifest,
-        full_wave_path=args.signal,
-        t=args.time,
-    )
+    waveform = getattr(args, "waveform", None) or getattr(args, "vcd", None)
+    if args.manifest is not None and waveform is not None:
+        raise SystemExit("provide either --manifest or --waveform/--vcd, not both")
+    if args.manifest is None and waveform is None:
+        raise SystemExit("one of --manifest or --waveform/--vcd is required")
+
+    if args.manifest is not None:
+        manifest = json.loads(args.manifest.read_text(encoding="utf-8"))
+        value_info = query_signal_value_from_manifest(
+            manifest=manifest,
+            full_wave_path=args.signal,
+            t=args.time,
+        )
+    else:
+        value_info = query_signal_value_from_fst(
+            waveform_path=_resolve_waveform_arg(args),
+            full_wave_path=args.signal,
+            t=args.time,
+            meta_out_dir=args.meta_dir or _default_wave_meta_out(waveform=_resolve_waveform_arg(args)),
+        )
     if args.out is None:
         print(json.dumps(value_info, indent=2, sort_keys=True))
     else:
@@ -412,11 +500,23 @@ def build_parser() -> argparse.ArgumentParser:
     wave_p.add_argument("--force", action="store_true")
     wave_p.set_defaults(func=_cmd_build_wave_db)
 
+    meta_p = sub.add_parser("build-wave-meta")
+    meta_p.add_argument("--waveform", type=Path)
+    meta_p.add_argument("--vcd", type=Path)
+    meta_p.add_argument("--out-dir", type=Path)
+    meta_p.add_argument("--force", action="store_true")
+    meta_p.set_defaults(func=_cmd_build_wave_meta)
+
     packet_p = sub.add_parser("query-packet")
-    packet_p.add_argument("--manifest", required=True, type=Path)
+    packet_p.add_argument("--manifest", type=Path)
+    packet_p.add_argument("--waveform", type=Path)
+    packet_p.add_argument("--vcd", type=Path)
+    packet_p.add_argument("--meta-dir", type=Path)
     packet_p.add_argument("--authority", type=Path)
-    packet_p.add_argument("--window-id", required=True)
+    packet_p.add_argument("--window-id")
     packet_p.add_argument("--focus-scope")
+    packet_p.add_argument("--t-start", type=int)
+    packet_p.add_argument("--t-end", type=int)
     packet_p.add_argument("--out", required=True, type=Path)
     packet_p.set_defaults(func=_cmd_query_packet)
 
@@ -427,7 +527,10 @@ def build_parser() -> argparse.ArgumentParser:
     rough_p.set_defaults(func=_cmd_rough_map_chisel)
 
     value_p = sub.add_parser("query-signal-value")
-    value_p.add_argument("--manifest", required=True, type=Path)
+    value_p.add_argument("--manifest", type=Path)
+    value_p.add_argument("--waveform", type=Path)
+    value_p.add_argument("--vcd", type=Path)
+    value_p.add_argument("--meta-dir", type=Path)
     value_p.add_argument("--signal", required=True)
     value_p.add_argument("--time", required=True, type=int)
     value_p.add_argument("--out", type=Path)

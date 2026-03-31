@@ -133,6 +133,28 @@ Cache behavior:
 - if a matching cached waveform DB already exists, the command reuses it instead of rebuilding
 - add `--force` to rebuild anyway
 
+### `build-wave-meta`
+
+Builds a lightweight waveform metadata cache without materializing full per-window change shards.
+
+Basic function:
+
+- parses scope and signal metadata from the waveform
+- stores `full_wave_path -> source_id` mapping for direct FST lookup
+- writes a small manifest and metadata tables for later direct queries
+
+Example:
+
+```bash
+python scripts/hw_debug_cli.py build-wave-meta \
+  --waveform /path/to/run.fst
+```
+
+When to prefer it:
+
+- point lookups such as "what is this signal at time `t`?"
+- targeted direct queries where full wave DB build would be wasteful
+
 ### `query-packet`
 
 Builds a compact debug packet for one waveform window.
@@ -163,6 +185,22 @@ python scripts/hw_debug_cli.py query-packet \
   --out /tmp/hw_packet.json
 ```
 
+Direct FST example with lightweight metadata cache:
+
+```bash
+python scripts/hw_debug_cli.py query-packet \
+  --waveform /path/to/run.fst \
+  --focus-scope TOP.SimTop.core.rob \
+  --t-start 123000 \
+  --t-end 124000 \
+  --out /tmp/hw_packet.json
+```
+
+When to prefer it:
+
+- targeted packet extraction over one suspicious time range
+- cases where full wave DB build is too expensive relative to the number of queries
+
 ### `query-signal-value`
 
 Queries one signal's value at one simulation time.
@@ -179,6 +217,15 @@ Example:
 ```bash
 python scripts/hw_debug_cli.py query-signal-value \
   --manifest /tmp/hw_wave_db/manifest.json \
+  --signal TOP.SimTop.core.rob.commit_valid \
+  --time 123456
+```
+
+Direct FST example with lightweight metadata cache:
+
+```bash
+python scripts/hw_debug_cli.py query-signal-value \
+  --waveform /path/to/run.fst \
   --signal TOP.SimTop.core.rob.commit_valid \
   --time 123456
 ```

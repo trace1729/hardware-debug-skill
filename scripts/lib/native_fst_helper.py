@@ -53,10 +53,10 @@ def ensure_fst_helper() -> Path:
     return HELPER_OUT
 
 
-def iter_fst_records(fst_path: Path) -> Iterator[dict[str, Any]]:
+def _run_helper_json_lines(args: list[str]) -> Iterator[dict[str, Any]]:
     helper = ensure_fst_helper()
     proc = subprocess.Popen(
-        [str(helper), "dump", str(fst_path)],
+        [str(helper), *args],
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
@@ -79,3 +79,23 @@ def iter_fst_records(fst_path: Path) -> Iterator[dict[str, Any]]:
     if rc != 0:
         raise RuntimeError(f"fst helper failed with exit code {rc}: {stderr.strip()}")
 
+
+def iter_fst_records(fst_path: Path, *, command: str = "dump") -> Iterator[dict[str, Any]]:
+    yield from _run_helper_json_lines([command, str(fst_path)])
+
+
+def query_fst_value_at_time(*, fst_path: Path, source_id: str, t: int, bit_width: int) -> dict[str, Any]:
+    rows = list(_run_helper_json_lines(["value-at-time", str(fst_path), source_id, str(t), str(bit_width)]))
+    if len(rows) != 1:
+        raise RuntimeError(f"unexpected fst helper response count: {len(rows)}")
+    return rows[0]
+
+
+def query_fst_range(*, fst_path: Path, source_ids: list[str], t_start: int, t_end: int) -> list[dict[str, Any]]:
+    if not source_ids:
+        return []
+    return list(
+        _run_helper_json_lines(
+            ["range-query", str(fst_path), str(t_start), str(t_end), *source_ids]
+        )
+    )

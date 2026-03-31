@@ -14,6 +14,11 @@ typedef struct {
     unsigned int scope_counter;
 } HierState;
 
+typedef struct {
+    uint64_t t_start;
+    uint64_t t_end;
+} RangeQueryContext;
+
 static void die(const char *message) {
     fprintf(stderr, "%s\n", message);
     exit(1);
@@ -227,13 +232,28 @@ static void emit_change_record(void *user_data, uint64_t time, fstHandle facidx,
     fputs("}\n", stdout);
 }
 
-static int dump_fst(const char *path) {
-    fstReaderContext *ctx = fstReaderOpen(path);
-    if (ctx == NULL) {
-        fprintf(stderr, "failed to open fst: %s\n", path);
-        return 1;
+static void emit_change_record_in_range(void *user_data, uint64_t time, fstHandle facidx, const unsigned char *value) {
+    RangeQueryContext *ctx = (RangeQueryContext *)user_data;
+    if ((ctx != NULL) && ((time < ctx->t_start) || (time > ctx->t_end))) {
+        return;
     }
+    emit_change_record(NULL, time, facidx, value);
+}
 
+static void emit_summary_record(fstReaderContext *ctx) {
+    fputs("{\"type\":\"summary\",\"start_time\":", stdout);
+    printf("%" PRIu64, fstReaderGetStartTime(ctx));
+    fputs(",\"end_time\":", stdout);
+    printf("%" PRIu64, fstReaderGetEndTime(ctx));
+    fputs(",\"scope_count\":", stdout);
+    printf("%" PRIu64, fstReaderGetScopeCount(ctx));
+    fputs(",\"signal_count\":", stdout);
+    printf("%" PRIu64, fstReaderGetVarCount(ctx));
+    fputs("}\n", stdout);
+}
+
+static int emit_hierarchy_records(fstReaderContext *ctx) {
+    fstReaderIterateHierRewind(ctx);
     HierState state = {0};
     struct fstHier *hier = NULL;
     while ((hier = fstReaderIterateHier(ctx)) != NULL) {
@@ -259,6 +279,18 @@ static int dump_fst(const char *path) {
         }
     }
     free_hier_state(&state);
+    return 0;
+}
+
+static int dump_fst(const char *path) {
+    fstReaderContext *ctx = fstReaderOpen(path);
+    if (ctx == NULL) {
+        fprintf(stderr, "failed to open fst: %s\n", path);
+        return 1;
+    }
+
+    emit_hierarchy_records(ctx);
+    emit_summary_record(ctx);
 
     fstReaderSetFacProcessMaskAll(ctx);
     if (!fstReaderIterBlocks(ctx, emit_change_record, NULL, NULL)) {
@@ -270,10 +302,124 @@ static int dump_fst(const char *path) {
     return 0;
 }
 
-int main(int argc, char **argv) {
-    if (argc != 3 || strcmp(argv[1], "dump") != 0) {
-        fprintf(stderr, "usage: %s dump <wave.fst>\n", argv[0]);
+static int dump_meta(const char *path) {
+    fstReaderContext *ctx = fstReaderOpen(path);
+    if (ctx == NULL) {
+        fprintf(stderr, "failed to open fst: %s\n", path);
         return 1;
     }
-    return dump_fst(argv[2]);
+    emit_hierarchy_records(ctx);
+    emit_summary_record(ctx);
+    fstReaderClose(ctx);
+    return 0;
+}
+
+static int value_at_time(const char *path, const char *handle_text, const char *time_text, const char *bit_width_text) {
+    char *handle_end = NULL;
+    char *time_end = NULL;
+    char *width_end = NULL;
+    unsigned long handle_ul = strtoul(handle_text, &handle_end, 10);
+    unsigned long long time_ull = strtoull(time_text, &time_end, 10);
+    unsigned long bit_width_ul = strtoul(bit_width_text, &width_end, 10);
+    if ((handle_end == NULL) || (*handle_end != 0) || (time_end == NULL) || (*time_end != 0) ||
+        (width_end == NULL) || (*width_end != 0) || (handle_ul == 0)) {
+        fprintf(stderr, "invalid handle/time/bit-width arguments\n");
+        return 1;
+    }
+
+    fstReaderContext *ctx = fstReaderOpen(path);
+    if (ctx == NULL) {
+        fprintf(stderr, "failed to open fst: %s\n", path);
+        return 1;
+    }
+
+    size_t buf_size = (size_t)bit_width_ul + 64;
+    char *buf = xcalloc(buf_size, 1);
+    char *value = fstReaderGetValueFromHandleAtTime(ctx, (uint64_t)time_ull, (fstHandle)handle_ul, buf);
+    fputs("{\"type\":\"value\",\"source_id\":", stdout);
+    json_escape_string(handle_text);
+    fputs(",\"t\":", stdout);
+    printf("%" PRIu64, (uint64_t)time_ull);
+    fputs(",\"found\":", stdout);
+    if (value == NULL) {
+        fputs("false", stdout);
+        fputs(",\"value\":null}\n", stdout);
+    } else {
+        fputs("true", stdout);
+        fputs(",\"value\":", stdout);
+        json_escape_string(value);
+        fputs("}\n", stdout);
+    }
+    free(buf);
+    fstReaderClose(ctx);
+    return 0;
+}
+
+static int range_query(const char *path, const char *start_text, const char *end_text, int handle_argc, char **handle_argv) {
+    char *start_end = NULL;
+    char *end_end = NULL;
+    unsigned long long t_start = strtoull(start_text, &start_end, 10);
+    unsigned long long t_end = strtoull(end_text, &end_end, 10);
+    if ((start_end == NULL) || (*start_end != 0) || (end_end == NULL) || (*end_end != 0) || (t_end < t_start)) {
+        fprintf(stderr, "invalid time range arguments\n");
+        return 1;
+    }
+    if (handle_argc <= 0) {
+        fprintf(stderr, "range-query requires at least one handle\n");
+        return 1;
+    }
+
+    fstReaderContext *ctx = fstReaderOpen(path);
+    if (ctx == NULL) {
+        fprintf(stderr, "failed to open fst: %s\n", path);
+        return 1;
+    }
+
+    fstHandle max_handle = fstReaderGetMaxHandle(ctx);
+    fstReaderClrFacProcessMaskAll(ctx);
+    for (int i = 0; i < handle_argc; ++i) {
+        char *handle_end = NULL;
+        unsigned long handle_ul = strtoul(handle_argv[i], &handle_end, 10);
+        if ((handle_end == NULL) || (*handle_end != 0) || (handle_ul == 0) || (handle_ul > max_handle)) {
+            fstReaderClose(ctx);
+            fprintf(stderr, "invalid handle: %s\n", handle_argv[i]);
+            return 1;
+        }
+        fstReaderSetFacProcessMask(ctx, (fstHandle)handle_ul);
+    }
+
+    fstReaderSetLimitTimeRange(ctx, (uint64_t)t_start, (uint64_t)t_end);
+    RangeQueryContext range_ctx = {
+        .t_start = (uint64_t)t_start,
+        .t_end = (uint64_t)t_end,
+    };
+    if (!fstReaderIterBlocks(ctx, emit_change_record_in_range, &range_ctx, NULL)) {
+        fstReaderClose(ctx);
+        fprintf(stderr, "failed to iterate fst value changes: %s\n", path);
+        return 1;
+    }
+    fstReaderClose(ctx);
+    return 0;
+}
+
+int main(int argc, char **argv) {
+    if ((argc == 3) && (strcmp(argv[1], "dump") == 0)) {
+        return dump_fst(argv[2]);
+    }
+    if ((argc == 3) && (strcmp(argv[1], "meta") == 0)) {
+        return dump_meta(argv[2]);
+    }
+    if ((argc == 6) && (strcmp(argv[1], "value-at-time") == 0)) {
+        return value_at_time(argv[2], argv[3], argv[4], argv[5]);
+    }
+    if ((argc >= 6) && (strcmp(argv[1], "range-query") == 0)) {
+        return range_query(argv[2], argv[3], argv[4], argc - 5, argv + 5);
+    }
+    fprintf(
+        stderr,
+        "usage: %s dump <wave.fst> | meta <wave.fst> | value-at-time <wave.fst> <handle> <time> <bit-width> | "
+        "range-query <wave.fst> <t-start> <t-end> <handle> [<handle> ...]\n",
+        argv[0]
+    );
+    return 1;
 }

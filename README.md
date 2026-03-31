@@ -133,6 +133,28 @@ python scripts/hw_debug_cli.py build-wave-db \
 - 如果已经存在匹配的 waveform DB artifact，就直接复用，不再重建
 - 如果你想强制重建，增加 `--force`
 
+### `build-wave-meta`
+
+构建轻量级的 waveform metadata cache，而不是把全部 value change 预先落成完整的分窗数据库。
+
+基础功能：
+
+- 解析波形中的 scope 和 signal metadata
+- 保存 `full_wave_path -> source_id` 映射，供直接 FST 查询使用
+- 输出较小的 manifest 和 metadata 表，供后续直接查询复用
+
+示例：
+
+```bash
+python scripts/hw_debug_cli.py build-wave-meta \
+  --waveform /path/to/run.fst
+```
+
+适用场景：
+
+- 点查询，例如“这个信号在时刻 `t` 的值是什么？”
+- 只做少量目标查询，不值得先构建完整 wave DB 的场景
+
 ### `query-packet`
 
 针对一个时间窗口生成紧凑的 debug packet。
@@ -163,6 +185,22 @@ python scripts/hw_debug_cli.py query-packet \
   --out /tmp/hw_packet.json
 ```
 
+基于轻量 metadata cache 的直接 FST packet 查询示例：
+
+```bash
+python scripts/hw_debug_cli.py query-packet \
+  --waveform /path/to/run.fst \
+  --focus-scope TOP.SimTop.core.rob \
+  --t-start 123000 \
+  --t-end 124000 \
+  --out /tmp/hw_packet.json
+```
+
+适用场景：
+
+- 只想针对一个可疑时间段抽取 packet
+- 完整 build wave DB 成本太高，而查询次数并不多
+
 ### `query-signal-value`
 
 用于查询某个信号在某个仿真时刻的值。
@@ -179,6 +217,15 @@ python scripts/hw_debug_cli.py query-packet \
 ```bash
 python scripts/hw_debug_cli.py query-signal-value \
   --manifest /tmp/hw_wave_db/manifest.json \
+  --signal TOP.SimTop.core.rob.commit_valid \
+  --time 123456
+```
+
+基于轻量 metadata cache 的直接 FST 查询示例：
+
+```bash
+python scripts/hw_debug_cli.py query-signal-value \
+  --waveform /path/to/run.fst \
   --signal TOP.SimTop.core.rob.commit_valid \
   --time 123456
 ```
