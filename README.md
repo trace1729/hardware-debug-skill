@@ -32,12 +32,30 @@ $Hardware Debug Waveform explain the module with xxx.vcd
 可选输入：
 
 - `--rtl-root`：可选，但是**推荐** emitted RTL 路径，通常是 `build/rtl`
+- `--error-log` / `--error-info`：可选错误日志路径，通常为 `simulator_out.txt`，可辅助识别 `difftest_error` / `assert_error`
 - `--focus-scope`：指定要聚焦的波形层级 scope
 - `--suggestion`：人工提供的调试提示，比如 `hang near dispatch`
 - `--top`：RTL 顶层模块名，默认 `SimTop`
+- `--window-len`：时间窗长度，默认 `1000`
 兼容性说明：
 
 - `--vcd` 仍然保留，作为 `--waveform` 的兼容别名
+
+推荐使用这个标准输入模板：
+
+```text
+debug_type: hardware bug debug
+waveform: /path/to/run.fst_or.vcd
+scala-root: /path/to/XiangShan/src/main/scala/xiangshan
+rtl-root: /path/to/XiangShan/build/rtl
+error-log: /path/to/simulator_out.txt
+focus-scope: TOP.SimTop.core.rob
+suggestion: 你怀疑的问题或观察到的异常
+top: SimTop
+window-len: 1000
+```
+
+如果用户只说“帮我 debug”但没有给足输入，优先让他按这个模板填写，而不是自由描述。
 
 
 ### 构建的临时产物存放位置
@@ -73,9 +91,15 @@ hardware-debug-waveform/artifacts/
 基础功能：
 
 - 检查路径是否有效
+- 如果提供 `--error-log`，会解析错误日志并推断可能的 bug 类型
+- 如果识别为 `assert_error`，会自动生成同目录下的 `assert_debug_guide.md`
+- 如果识别为 `assert_error`，会自动生成同目录下的 `waveform_search_signals.txt`
+- 如果识别为 `difftest_error`，会自动生成同目录下的 `disassembly.txt`
+- 如果识别为 `difftest_error`，会自动生成同目录下的 `waveform_search_signals.txt`
 - 输出文件树大小和波形文件大小
 - 当预处理成本较高时给出告警
 - 如果没有 `--rtl-root`，自动进入 waveform-only 分析模式
+- 如果目标目录不可写，会明确提示你放行该目录；不会偷偷把这些文件落到别的临时路径
 
 ### `build-authority`
 
