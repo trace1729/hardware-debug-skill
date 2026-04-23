@@ -32,12 +32,30 @@ The skill expects:
 Optional inputs:
 
 - `--rtl-root`: optional but **highly recommand** path to emitted RTL, usually `build/rtl`
+- `--error-log` / `--error-info`: optional error-log path, usually `simulator_out.txt`, which can hint `difftest_error` or `assert_error`
 - `--focus-scope`: a waveform hierarchy scope to narrow analysis
 - `--suggestion`: a human hint such as `hang near dispatch` or `wrong commit behavior`
 - `--top`: RTL top module name, default `SimTop`
+- `--window-len`: time-window length, default `1000`
 Compatibility note:
 
 - `--vcd` still works as an alias for `--waveform`
+
+Recommended standard debug template:
+
+```text
+debug_type: hardware bug debug
+waveform: /path/to/run.fst_or.vcd
+scala-root: /path/to/XiangShan/src/main/scala/xiangshan
+rtl-root: /path/to/XiangShan/build/rtl
+error-log: /path/to/simulator_out.txt
+focus-scope: TOP.SimTop.core.rob
+suggestion: what you suspect or what looks wrong
+top: SimTop
+window-len: 1000
+```
+
+If the user only says "debug this" without enough inputs, prefer asking them to fill in this template instead of asking an open-ended free-form question.
 
 
 
@@ -74,9 +92,15 @@ Checks inputs and prints the recommended command sequence.
 Basic function:
 
 - verifies that the provided paths exist
+- if `--error-log` is provided, parses the error log and infers a likely bug type
+- if `assert_error` is detected, automatically generates `assert_debug_guide.md` in the same directory
+- if `assert_error` is detected, automatically generates `waveform_search_signals.txt` in the same directory
+- if `difftest_error` is detected, automatically generates `disassembly.txt` in the same directory
+- if `difftest_error` is detected, automatically generates `waveform_search_signals.txt` in the same directory
 - prints tree size and waveform size
 - warns when preprocessing may be expensive
 - supports waveform-only analysis if `--rtl-root` is omitted
+- if the target directory is not writable, it explicitly asks for permission instead of silently dropping helper files into another temporary location
 
 ### `build-authority`
 
